@@ -86,7 +86,68 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		}
 	);
 
-	context.subscriptions.push(statusCmd, addToChangelistCmd, removeFromChangelistCmd);
+	const deleteChangelistCmd = vscode.commands.registerCommand(
+		'git-cl.deleteChangelist',
+		async (...args: unknown[]) => {
+			const changelistName = resolveChangelistName(scmProvider, args);
+
+			if (changelistName) {
+				// Invoked from context menu — we have the changelist name
+				await deleteChangelistWithConfirmation(scmProvider, changelistName);
+			} else {
+				// Command palette — prompt user to pick a changelist
+				const name = await pickChangelistForDeletion(scmProvider);
+				if (name) {
+					await deleteChangelistWithConfirmation(scmProvider, name);
+				}
+			}
+		}
+	);
+
+	const deleteAllChangelistsCmd = vscode.commands.registerCommand(
+		'git-cl.deleteAllChangelists',
+		async () => {
+			const store = scmProvider.getChangelistStore();
+			store.load();
+			const names = store.getNames();
+
+			if (names.length === 0) {
+				vscode.window.showInformationMessage('git-cl: No changelists to delete.');
+				return;
+			}
+
+			const totalFiles = names.reduce(
+				(sum, name) => sum + store.getFiles(name).length, 0
+			);
+
+			const message = totalFiles > 0
+				? `Delete all ${names.length} changelist(s)? ${totalFiles} file(s) will be moved to Unassigned.`
+				: `Delete all ${names.length} empty changelist(s)?`;
+
+			const answer = await vscode.window.showWarningMessage(
+				message,
+				{ modal: true },
+				'Delete All'
+			);
+
+			if (answer !== 'Delete All') {
+				return;
+			}
+
+			try {
+				store.deleteAll();
+				store.save();
+			} catch (e: unknown) {
+				const msg = e instanceof Error ? e.message : String(e);
+				vscode.window.showErrorMessage(`git-cl: ${msg}`);
+				return;
+			}
+
+			await scmProvider.refresh();
+		}
+	);
+
+	context.subscriptions.push(statusCmd, addToChangelistCmd, removeFromChangelistCmd, deleteChangelistCmd, deleteAllChangelistsCmd);
 	outputChannel.appendLine('git-cl extension activated.');
 }
 
@@ -256,6 +317,90 @@ async function pickChangelist(
 	}
 
 	return picked.label;
+}
+
+/**
+ * Resolve changelist name from context menu args (group header click).
+ * Returns the name or undefined if not invoked from a group header.
+ */
+function resolveChangelistName(
+	_scmProvider: ChangelistSCMProvider,
+	args: unknown[]
+): string | undefined {
+	if (args.length < 1 || !args[0]) {
+		return undefined;
+	}
+
+	const group = args[0] as vscode.SourceControlResourceGroup;
+	if (typeof group.id !== 'string' || !group.id.startsWith('cl:')) {
+		return undefined;
+	}
+
+	return group.id.slice(3); // strip "cl:" prefix
+}
+
+/**
+ * Show QuickPick to select a changelist for deletion (command palette flow).
+ */
+async function pickChangelistForDeletion(
+	scmProvider: ChangelistSCMProvider
+): Promise<string | undefined> {
+	const store = scmProvider.getChangelistStore();
+	store.load();
+	const names = store.getNames();
+
+	if (names.length === 0) {
+		vscode.window.showInformationMessage('git-cl: No changelists to delete.');
+		return undefined;
+	}
+
+	const items: vscode.QuickPickItem[] = names.map(name => ({
+		label: name,
+		description: `${store.getFiles(name).length} file(s)`,
+	}));
+
+	const picked = await vscode.window.showQuickPick(items, {
+		placeHolder: 'Select a changelist to delete',
+	});
+
+	return picked?.label;
+}
+
+/**
+ * Delete a changelist after confirming with the user.
+ */
+async function deleteChangelistWithConfirmation(
+	scmProvider: ChangelistSCMProvider,
+	name: string
+): Promise<void> {
+	const store = scmProvider.getChangelistStore();
+	store.load();
+	const files = store.getFiles(name);
+
+	const message = files.length > 0
+		? `Delete changelist "${name}"? ${files.length} file(s) will be moved to Unassigned.`
+		: `Delete empty changelist "${name}"?`;
+
+	const answer = await vscode.window.showWarningMessage(
+		message,
+		{ modal: true },
+		'Delete'
+	);
+
+	if (answer !== 'Delete') {
+		return;
+	}
+
+	try {
+		store.deleteChangelist(name);
+		store.save();
+	} catch (e: unknown) {
+		const msg = e instanceof Error ? e.message : String(e);
+		vscode.window.showErrorMessage(`git-cl: ${msg}`);
+		return;
+	}
+
+	await scmProvider.refresh();
 }
 
 export function deactivate(): void {

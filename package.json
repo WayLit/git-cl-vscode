@@ -31,9 +31,32 @@
         "command": "git-cl.removeFromChangelist",
         "title": "Remove from Changelist",
         "category": "git-cl"
+      },
+      {
+        "command": "git-cl.deleteChangelist",
+        "title": "Delete Changelist",
+        "category": "git-cl",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "git-cl.deleteAllChangelists",
+        "title": "Delete All Changelists",
+        "category": "git-cl"
       }
     ],
     "menus": {
+      "scm/resourceGroup/context": [
+        {
+          "command": "git-cl.deleteChangelist",
+          "when": "scmProvider == git-cl && scmResourceGroup =~ /^cl:/",
+          "group": "inline"
+        },
+        {
+          "command": "git-cl.deleteChangelist",
+          "when": "scmProvider == git-cl && scmResourceGroup =~ /^cl:/",
+          "group": "1_modification"
+        }
+      ],
       "scm/resourceState/context": [
         {
           "command": "git-cl.addToChangelist",

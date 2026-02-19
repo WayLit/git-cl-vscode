@@ -137,7 +137,8 @@
         "Tree view refreshes immediately"
       ],
       "priority": 8,
-      "passes": false
+      "passes": false,
+      "inProgress": true
     },
     {
       "id": "US-009",

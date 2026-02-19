@@ -160,3 +160,22 @@
   - `validateChangelistName()` returns `string | null` — compatible with `showInputBox({ validateInput })` API
   - For command palette invocations (no args), show file picker from `getGitStatus()` with `canPickMany: true`
 ---
+
+## 2026-02-19 - US-007
+- What was implemented: Remove Files from Changelist command with context menu and command palette support
+  - `git-cl.removeFromChangelist` command registered in command palette and context menus
+  - Context menu "Remove from Changelist" on files inside active changelist groups (`scmResourceGroup =~ /^cl:/`)
+  - Multi-select support: handles array of selected resources from second arg
+  - Command palette mode: shows QuickPick with all files from all changelists, grouped by changelist name
+  - Uses `ChangelistStore.findChangelist()` to determine which changelist each file belongs to, then `removeFiles()` to remove
+  - Files return to the "Unassigned" group after removal
+  - Tree view refreshes immediately after removing via `scmProvider.refresh()`
+- Files changed:
+  - `package.json` — Added `git-cl.removeFromChangelist` command + `scm/resourceState/context` menu entry
+  - `src/extension.ts` — Command handler + `resolveFilePathsFromChangelists()` helper function
+- **Learnings for future iterations:**
+  - Use `scmResourceGroup =~ /^cl:/` in `when` clause to match active changelist groups (IDs are `cl:<name>`)
+  - VS Code `when` clauses support regex via `=~` operator — useful for matching dynamic group IDs
+  - `ChangelistStore.findChangelist(path)` looks up which changelist owns a file — useful for removal without needing group context
+  - Command palette removal shows files with their changelist name as description, helping users identify which list a file belongs to
+---
