@@ -58,8 +58,8 @@
         "All paths passed to git are resolved relative to git root"
       ],
       "priority": 3,
-      "passes": false,
-      "inProgress": true
+      "passes": true,
+      "inProgress": false
     },
     {
       "id": "US-004",
@@ -75,7 +75,8 @@
         "A \"Stashed\" section shows stashed changelists (read-only, with timestamp and source branch info)"
       ],
       "priority": 4,
-      "passes": false
+      "passes": true,
+      "inProgress": false
     },
     {
       "id": "US-005",

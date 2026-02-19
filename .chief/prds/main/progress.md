@@ -11,6 +11,15 @@
 - cl.json format: `Record<string, string[]>` — changelist name → relative file paths (forward slashes)
 - cl-stashes.json format: `Record<string, StashMetadata>` — uses snake_case keys for Python interop
 - Use `validateChangelistName()` and `sanitizeFilePath()` from changelistStore.ts for input validation
+- Git operations: `src/gitUtils.ts` wraps all git commands via `child_process.execFile` (no shell)
+- All gitUtils functions take `gitRoot` as parameter — pass result of `getGitRoot()`
+- `getGitStatus()` returns `Map<string, string>` with path → 2-char status code (porcelain format)
+- SCM provider: `ChangelistSCMProvider` (src/scmProvider.ts) manages the Source Control sidebar tree
+- SCM groups ordered: [active changelists] → Unassigned → [stashed changelists]
+- Groups are rebuilt when changelist set changes; resource states updated on every refresh
+- Diff on click uses custom `git-cl-head` URI scheme via `HeadContentProvider` (shows `git show HEAD:path`)
+- File watchers on `.git/cl.json`, `.git/cl-stashes.json`, `.git/index` + workspace file saves trigger debounced refresh (300ms)
+- `activate()` in extension.ts is async — resolves gitRoot before creating SCM provider
 
 ## 2026-02-19 - US-001
 - What was implemented: Full VS Code extension scaffold with build tooling
@@ -49,4 +58,53 @@
   - `cl-stashes.json` maps changelist name → `StashMetadata` with `stash_ref`, `stash_message`, `files`, `timestamp`, `source_branch`, `file_categories`
   - File paths in cl.json use forward slashes (git convention) regardless of OS
   - Build (`pnpm run build`) needs `dangerouslyDisableSandbox: true` due to write to `dist/`
+---
+
+## 2026-02-19 - US-003
+- What was implemented: Git utility layer wrapping common git operations
+  - `getGitRoot(cwd)` — returns absolute path to repository root
+  - `getGitStatus(gitRoot)` — runs `git status --porcelain`, returns `Map<string, string>` (path → 2-char status)
+  - `gitAdd(files, gitRoot)` — stages specified files
+  - `gitReset(files, gitRoot)` — unstages files (git reset HEAD)
+  - `gitCheckout(files, gitRoot)` — reverts files to HEAD
+  - `gitCommit(files, message, gitRoot)` — stages and commits files with message
+  - `gitDiff(files, gitRoot, options?)` — returns diff output, supports `--staged`
+  - `gitStashPush(message, gitRoot, files?)` — creates stash with optional file filtering
+  - `gitStashPop(ref, gitRoot)` — pops a specific stash reference
+  - `gitStashList(gitRoot)` — lists stash entries with refs and messages
+  - `getCurrentBranch(gitRoot)` — returns branch name or null if detached
+  - `gitCheckoutBranch(name, gitRoot, base?)` — creates and switches to new branch
+- Files changed:
+  - `src/gitUtils.ts` — All git utility functions, uses `child_process.execFile` for safety
+- **Learnings for future iterations:**
+  - All git operations use `execFile` (not `exec`) to avoid shell injection
+  - `git status --porcelain` format: first 2 chars are status code, char 3 is space, rest is file path
+  - Renamed files appear as `R  old -> new` — parser extracts the new path
+  - `git symbolic-ref --short HEAD` fails in detached HEAD state — catch and return null
+  - `gitStashList` returns empty array on error (e.g., no stash entries) rather than throwing
+  - Private `execGit` helper centralizes error handling with 10MB max buffer
+---
+
+## 2026-02-19 - US-004
+- What was implemented: SCM Provider & Changelist Tree View
+  - `ChangelistSCMProvider` class — registers `vscode.scm.createSourceControl`, manages resource groups
+  - `HeadContentProvider` — `TextDocumentContentProvider` for `git-cl-head` scheme, returns `git show HEAD:path`
+  - Active changelist groups: one `SourceControlResourceGroup` per changelist from cl.json
+  - Unassigned group: shows git-tracked files not in any changelist or stash
+  - Stashed groups: read-only, labeled with changelist name, source branch, and timestamp
+  - Diff on click: clicking a file opens `vscode.diff(headUri, workingUri)` for tracked files, `vscode.open` for untracked
+  - Auto-refresh: watchers on `.git/cl.json`, `.git/cl-stashes.json`, `.git/index`, plus workspace file saves
+  - Debounced refresh (300ms) to avoid excessive updates
+  - Group ordering maintained: active changelists → Unassigned → stashed changelists
+  - Updated `extension.ts` to async `activate()` that resolves gitRoot and creates the SCM provider
+- Files changed:
+  - `src/scmProvider.ts` — New file: ChangelistSCMProvider, HeadContentProvider
+  - `src/extension.ts` — Updated: async activate, SCM provider initialization
+- **Learnings for future iterations:**
+  - VS Code SCM resource groups appear in creation order — dispose and recreate all groups when the set changes to maintain ordering
+  - `SourceControlResourceGroup.hideWhenEmpty` hides groups with no resource states
+  - For diff, use a custom URI scheme with `TextDocumentContentProvider` rather than depending on the built-in git extension's internals
+  - Untracked files (`??` status) have no HEAD version — use `vscode.open` instead of `vscode.diff`
+  - `SourceControlResourceState.decorations.faded` is useful for stashed/read-only files
+  - `SourceControlResourceState.decorations.strikeThrough` marks deleted files
 ---
