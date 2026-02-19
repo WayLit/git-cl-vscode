@@ -187,8 +187,8 @@ export class ChangelistSCMProvider implements vscode.Disposable {
 	private setupWatchers(): void {
 		const gitDir = path.join(this.gitRoot, '.git');
 
-		// Watch cl.json, cl-stashes.json, and git index
-		const patterns = ['cl.json', 'cl-stashes.json', 'index'];
+		// Watch cl.json, cl-stashes.json, git index, and HEAD (for branch switches)
+		const patterns = ['cl.json', 'cl-stashes.json', 'index', 'HEAD'];
 		for (const file of patterns) {
 			const watcher = vscode.workspace.createFileSystemWatcher(
 				new vscode.RelativePattern(vscode.Uri.file(gitDir), file)
