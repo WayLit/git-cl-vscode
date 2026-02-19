@@ -72,6 +72,17 @@
         "title": "Checkout (Revert) Changelist",
         "category": "git-cl",
         "icon": "$(discard)"
+      },
+      {
+        "command": "git-cl.stashChangelist",
+        "title": "Stash Changelist",
+        "category": "git-cl",
+        "icon": "$(archive)"
+      },
+      {
+        "command": "git-cl.stashAllChangelists",
+        "title": "Stash All Changelists",
+        "category": "git-cl"
       }
     ],
     "menus": {
@@ -125,6 +136,11 @@
           "command": "git-cl.checkoutChangelist",
           "when": "scmProvider == git-cl && scmResourceGroup =~ /^cl:/",
           "group": "3_revert@1"
+        },
+        {
+          "command": "git-cl.stashChangelist",
+          "when": "scmProvider == git-cl && scmResourceGroup =~ /^cl:/",
+          "group": "4_stash@1"
         }
       ],
       "scm/resourceState/context": [

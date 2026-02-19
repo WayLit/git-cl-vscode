@@ -217,7 +217,8 @@
         "Tree view refreshes after revert"
       ],
       "priority": 13,
-      "passes": false
+      "passes": true,
+      "inProgress": false
     },
     {
       "id": "US-014",
@@ -232,7 +233,8 @@
         "Color-coded output matching git-cl's terminal colors"
       ],
       "priority": 14,
-      "passes": false
+      "passes": true,
+      "inProgress": false
     },
     {
       "id": "US-015",
@@ -251,7 +253,8 @@
         "Stashed changelist appears in the Stashed section of the tree"
       ],
       "priority": 15,
-      "passes": false
+      "passes": true,
+      "inProgress": false
     },
     {
       "id": "US-016",

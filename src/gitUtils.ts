@@ -131,13 +131,24 @@ export async function gitDiff(files: string[], gitRoot: string, options?: DiffOp
 /**
  * Creates a stash with the given message.
  * If files are specified, only those files are stashed (using --).
+ * Use includeUntracked to also stash untracked files.
  */
-export async function gitStashPush(message: string, gitRoot: string, files?: string[]): Promise<void> {
+export async function gitStashPush(message: string, gitRoot: string, files?: string[], options?: { includeUntracked?: boolean }): Promise<void> {
 	const args = ['stash', 'push', '-m', message];
+	if (options?.includeUntracked) {
+		args.push('--include-untracked');
+	}
 	if (files && files.length > 0) {
 		args.push('--', ...files);
 	}
 	await execGit(args, gitRoot);
+}
+
+/**
+ * Drops a specific stash reference (e.g., "stash@{0}").
+ */
+export async function gitStashDrop(ref: string, gitRoot: string): Promise<void> {
+	await execGit(['stash', 'drop', ref], gitRoot);
 }
 
 /**

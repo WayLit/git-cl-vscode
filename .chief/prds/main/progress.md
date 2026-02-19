@@ -287,3 +287,70 @@
   - Menu group `2_diff@1` separates diff actions from modification actions (`1_modification`) in context menus
   - The `$(diff)` codicon icon is available for diff-related commands
 ---
+
+## 2026-02-19 - US-013
+- What was implemented: Checkout (Revert) Changelist command
+  - `git-cl.checkoutChangelist` command — reverts all files in a changelist to HEAD
+  - Context menu "Checkout (Revert) Changelist" on changelist group headers (group `3_revert@1`)
+  - Command palette flow: QuickPick to select changelist, then confirmation dialog
+  - Confirmation dialog warns about data loss and shows file count
+  - Two revert options: "Revert" (keep changelist) and "Revert & Delete Changelist" (remove changelist after revert)
+  - Uses `gitCheckout()` from gitUtils.ts which runs `git checkout HEAD --`
+  - Success notification shows count of reverted files
+  - Tree view refreshes after revert
+- Files changed:
+  - `package.json` — Added `git-cl.checkoutChangelist` command + `scm/resourceGroup/context` menu entry
+  - `src/extension.ts` — Checkout command handler, imported `gitCheckout`
+- **Learnings for future iterations:**
+  - `store.getFiles()` returns `readonly string[]` — spread into mutable array (`[...files]`) before passing to gitUtils functions that expect `string[]`
+  - `$(discard)` codicon icon is appropriate for revert/checkout operations
+  - Menu group `3_revert@1` separates destructive revert actions from diff (`2_diff`) and modification (`1_modification`) groups
+  - `vscode.window.showWarningMessage` with `{ modal: true }` and multiple button labels is ideal for confirmation dialogs with options
+---
+
+## 2026-02-19 - US-014
+- What was implemented: Changelist Status Display command
+  - Replaced placeholder `showStatus` with full formatted status output
+  - Shows active changelists with their files and ANSI-colored git status codes
+  - Shows stashed changelists with timestamp and source branch info
+  - Shows unassigned files (modified/staged/untracked not in any changelist or stash)
+  - Summary line with counts of changelists, assigned files, unassigned files, stashes
+  - Color scheme: green = added/untracked, yellow = modified/renamed, red = deleted/conflicts, cyan = changelist names, dim = clean/stashed
+- Files changed:
+  - `src/extension.ts` — Replaced placeholder showStatus handler with `showFormattedStatus()`, added `colorizeStatus()` helper and ANSI color constants
+- **Learnings for future iterations:**
+  - VS Code output channels support ANSI escape codes (`\x1b[32m` etc.) for colored text in recent versions
+  - `outputChannel.clear()` clears previous content before writing fresh status
+  - `outputChannel.show(true)` reveals the output channel without stealing focus (preservesFocus = true)
+  - `ChangelistStore.getAll()` returns `Record<string, string[]>` — use `Object.keys()` and direct indexing for iteration
+  - `StashStore.getStashedFiles()` returns a `Set<string>` of all files across all stashes — useful for excluding from unassigned
+---
+
+## 2026-02-19 - US-015
+- What was implemented: Stash Changelist command with context menu and Stash All variant
+  - `git-cl.stashChangelist` command — stashes a single changelist with full file categorization
+  - `git-cl.stashAllChangelists` command — stashes all active changelists sequentially
+  - Context menu "Stash Changelist" on changelist group headers (group `4_stash@1`)
+  - Command palette flow: QuickPick to select changelist, then stash
+  - File categorization: unstaged_changes, staged_additions, untracked, deleted (matching Python git-cl)
+  - Stash message format: `git-cl-stash:<name>:<timestamp>` (ISO 8601)
+  - Saves full `StashMetadata` to cl-stashes.json via `StashStore.setStash()`
+  - Removes changelist from cl.json after successful stash
+  - Rollback on failure: drops git stash or restores metadata if save fails
+  - Shows error if no stashable files (all files are clean)
+  - Updated `gitStashPush` to support `--include-untracked` for untracked files
+  - Added `gitStashDrop` function for rollback support
+- Files changed:
+  - `package.json` — Added `git-cl.stashChangelist` + `git-cl.stashAllChangelists` commands, context menu entry
+  - `src/extension.ts` — Stash command handlers, `stashSingleChangelist()` helper, imported stash-related functions
+  - `src/gitUtils.ts` — Updated `gitStashPush` signature (added options.includeUntracked), added `gitStashDrop`
+- **Learnings for future iterations:**
+  - `git stash push --include-untracked -m <msg> -- <files>` handles all file types (staged, unstaged, untracked, deleted)
+  - Only add `--include-untracked` when there are actually untracked files in the stash list
+  - Stash ref is always `stash@{0}` immediately after creation — safe to use without searching
+  - `getCurrentBranch()` returns null in detached HEAD state — fall back to `'HEAD'` for metadata
+  - Rollback strategy: on metadata save failure → drop stash; on cl.json save failure → remove stash entry + pop stash
+  - `StashStore.setStash(name, metadata)` adds/updates an entry; `StashStore.removeStash(name)` removes it
+  - Menu group `4_stash@1` keeps stash action separate from modification, diff, and revert groups
+  - `FileCategories` and `StashMetadata` types are exported from stashStore.ts for use in extension.ts
+---

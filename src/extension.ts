@@ -1,8 +1,9 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { getGitRoot, getGitStatus, gitAdd, gitReset, gitCommit, gitCheckout } from './gitUtils';
+import { getGitRoot, getGitStatus, gitAdd, gitReset, gitCommit, gitCheckout, gitStashPush, gitStashDrop, gitStashPop, getCurrentBranch } from './gitUtils';
 import { ChangelistSCMProvider } from './scmProvider';
 import { validateChangelistName } from './changelistStore';
+import { FileCategories, StashMetadata } from './stashStore';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
 	const outputChannel = vscode.window.createOutputChannel('git-cl');
@@ -457,7 +458,55 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		}
 	);
 
-	context.subscriptions.push(statusCmd, addToChangelistCmd, removeFromChangelistCmd, deleteChangelistCmd, deleteAllChangelistsCmd, stageChangelistCmd, unstageChangelistCmd, commitChangelistCmd, diffChangelistCmd, checkoutChangelistCmd);
+	const stashChangelistCmd = vscode.commands.registerCommand(
+		'git-cl.stashChangelist',
+		async (...args: unknown[]) => {
+			const changelistName = resolveChangelistName(scmProvider, args);
+			const name = changelistName ?? await pickChangelistForAction(scmProvider, 'stash');
+			if (!name) {
+				return;
+			}
+
+			const success = await stashSingleChangelist(scmProvider, name, gitRoot);
+			if (success) {
+				await scmProvider.refresh();
+				vscode.window.showInformationMessage(
+					`git-cl: Stashed changelist "${name}".`
+				);
+			}
+		}
+	);
+
+	const stashAllChangelistsCmd = vscode.commands.registerCommand(
+		'git-cl.stashAllChangelists',
+		async () => {
+			const store = scmProvider.getChangelistStore();
+			store.load();
+			const names = [...store.getNames()];
+
+			if (names.length === 0) {
+				vscode.window.showInformationMessage('git-cl: No changelists to stash.');
+				return;
+			}
+
+			let stashedCount = 0;
+			for (const name of names) {
+				const success = await stashSingleChangelist(scmProvider, name, gitRoot);
+				if (success) {
+					stashedCount++;
+				}
+			}
+
+			await scmProvider.refresh();
+			if (stashedCount > 0) {
+				vscode.window.showInformationMessage(
+					`git-cl: Stashed ${stashedCount} changelist(s).`
+				);
+			}
+		}
+	);
+
+	context.subscriptions.push(statusCmd, addToChangelistCmd, removeFromChangelistCmd, deleteChangelistCmd, deleteAllChangelistsCmd, stageChangelistCmd, unstageChangelistCmd, commitChangelistCmd, diffChangelistCmd, checkoutChangelistCmd, stashChangelistCmd, stashAllChangelistsCmd);
 	outputChannel.appendLine('git-cl extension activated.');
 }
 
@@ -721,6 +770,139 @@ async function deleteChangelistWithConfirmation(
 	}
 
 	await scmProvider.refresh();
+}
+
+/**
+ * Stash a single changelist: categorize files, create git stash,
+ * save metadata, and remove from cl.json. Rolls back on failure.
+ * Returns true on success, false on failure (with error shown to user).
+ */
+async function stashSingleChangelist(
+	scmProvider: ChangelistSCMProvider,
+	name: string,
+	gitRoot: string
+): Promise<boolean> {
+	const store = scmProvider.getChangelistStore();
+	store.load();
+	const files = store.getFiles(name);
+
+	if (files.length === 0) {
+		vscode.window.showInformationMessage(`git-cl: Changelist "${name}" is empty.`);
+		return false;
+	}
+
+	// Get git status to categorize files
+	let gitStatusMap: Map<string, string>;
+	try {
+		gitStatusMap = await getGitStatus(gitRoot);
+	} catch {
+		vscode.window.showErrorMessage('git-cl: Failed to read git status.');
+		return false;
+	}
+
+	// Categorize files by status (matching Python git-cl behavior)
+	const fileCategories: FileCategories = {
+		unstaged_changes: [],
+		staged_additions: [],
+		untracked: [],
+		deleted: [],
+	};
+
+	const stashableFiles: string[] = [];
+
+	for (const filePath of files) {
+		const status = gitStatusMap.get(filePath);
+		if (!status) {
+			continue; // clean file — nothing to stash
+		}
+
+		stashableFiles.push(filePath);
+
+		if (status === '??') {
+			fileCategories.untracked.push(filePath);
+		} else if (status[1] === 'D' || (status[0] === 'D' && status[1] === ' ')) {
+			fileCategories.deleted.push(filePath);
+		} else if (status[0] === 'A') {
+			fileCategories.staged_additions.push(filePath);
+		} else {
+			fileCategories.unstaged_changes.push(filePath);
+		}
+	}
+
+	if (stashableFiles.length === 0) {
+		vscode.window.showErrorMessage(
+			`git-cl: No stashable files in changelist "${name}". All files are clean.`
+		);
+		return false;
+	}
+
+	// Create stash
+	const timestamp = new Date().toISOString();
+	const stashMessage = `git-cl-stash:${name}:${timestamp}`;
+	const hasUntracked = fileCategories.untracked.length > 0;
+
+	try {
+		await gitStashPush(stashMessage, gitRoot, stashableFiles, {
+			includeUntracked: hasUntracked,
+		});
+	} catch (e: unknown) {
+		const msg = e instanceof Error ? e.message : String(e);
+		vscode.window.showErrorMessage(`git-cl: Failed to stash changelist "${name}": ${msg}`);
+		return false;
+	}
+
+	// Stash ref is stash@{0} immediately after creation
+	const stashRef = 'stash@{0}';
+
+	// Get current branch for metadata
+	let sourceBranch: string;
+	try {
+		sourceBranch = await getCurrentBranch(gitRoot) ?? 'HEAD';
+	} catch {
+		sourceBranch = 'HEAD';
+	}
+
+	// Save stash metadata to cl-stashes.json
+	const stashStore = scmProvider.getStashStore();
+	stashStore.load();
+
+	const metadata: StashMetadata = {
+		stash_ref: stashRef,
+		stash_message: stashMessage,
+		files: [...files],
+		timestamp,
+		source_branch: sourceBranch,
+		file_categories: fileCategories,
+	};
+
+	try {
+		stashStore.setStash(name, metadata);
+		stashStore.save();
+	} catch (e: unknown) {
+		// Rollback: drop the stash we just created
+		try { await gitStashDrop(stashRef, gitRoot); } catch { /* best effort */ }
+		const msg = e instanceof Error ? e.message : String(e);
+		vscode.window.showErrorMessage(`git-cl: Failed to save stash metadata: ${msg}`);
+		return false;
+	}
+
+	// Remove changelist from cl.json
+	try {
+		store.deleteChangelist(name);
+		store.save();
+	} catch (e: unknown) {
+		// Rollback: remove from stash store and pop stash
+		try {
+			stashStore.removeStash(name);
+			stashStore.save();
+			await gitStashPop(stashRef, gitRoot);
+		} catch { /* best effort */ }
+		const msg = e instanceof Error ? e.message : String(e);
+		vscode.window.showErrorMessage(`git-cl: Failed to update changelist data: ${msg}`);
+		return false;
+	}
+
+	return true;
 }
 
 // ANSI color codes for output channel formatting
