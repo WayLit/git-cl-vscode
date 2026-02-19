@@ -86,6 +86,52 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		}
 	);
 
+	const openFileDiffCmd = vscode.commands.registerCommand(
+		'git-cl.openFileDiff',
+		async (...args: unknown[]) => {
+			const resource = args[0] as vscode.SourceControlResourceState | undefined;
+			if (!resource?.resourceUri) {
+				return;
+			}
+
+			const filePath = path.relative(gitRoot, resource.resourceUri.fsPath)
+				.split(path.sep).join('/');
+
+			let gitStatusMap: Map<string, string>;
+			try {
+				gitStatusMap = await getGitStatus(gitRoot);
+			} catch {
+				return;
+			}
+
+			const status = gitStatusMap.get(filePath);
+			const fileUri = resource.resourceUri;
+			const isUntracked = status === '??';
+			const isDeleted = status !== undefined &&
+				(status[1] === 'D' || (status[0] === 'D' && status[1] === ' '));
+
+			if (isUntracked) {
+				await vscode.commands.executeCommand('vscode.open', fileUri);
+			} else if (isDeleted) {
+				const headUri = vscode.Uri.from({
+					scheme: 'git-cl-head',
+					path: `/${filePath}`,
+				});
+				await vscode.commands.executeCommand('vscode.open', headUri);
+			} else {
+				const headUri = vscode.Uri.from({
+					scheme: 'git-cl-head',
+					path: `/${filePath}`,
+				});
+				await vscode.commands.executeCommand('vscode.diff',
+					headUri,
+					fileUri,
+					`${path.basename(filePath)} (Working Tree)`
+				);
+			}
+		}
+	);
+
 	const deleteChangelistCmd = vscode.commands.registerCommand(
 		'git-cl.deleteChangelist',
 		async (...args: unknown[]) => {
@@ -739,7 +785,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		}
 	);
 
-	context.subscriptions.push(statusCmd, addToChangelistCmd, removeFromChangelistCmd, deleteChangelistCmd, deleteAllChangelistsCmd, stageChangelistCmd, unstageChangelistCmd, commitChangelistCmd, diffChangelistCmd, checkoutChangelistCmd, stashChangelistCmd, stashAllChangelistsCmd, unstashChangelistCmd, unstashForceChangelistCmd, unstashAllChangelistsCmd, branchFromChangelistCmd);
+	context.subscriptions.push(statusCmd, addToChangelistCmd, removeFromChangelistCmd, openFileDiffCmd, deleteChangelistCmd, deleteAllChangelistsCmd, stageChangelistCmd, unstageChangelistCmd, commitChangelistCmd, diffChangelistCmd, checkoutChangelistCmd, stashChangelistCmd, stashAllChangelistsCmd, unstashChangelistCmd, unstashForceChangelistCmd, unstashAllChangelistsCmd, branchFromChangelistCmd);
 	outputChannel.appendLine('git-cl extension activated.');
 }
 

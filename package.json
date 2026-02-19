@@ -30,7 +30,14 @@
       {
         "command": "git-cl.removeFromChangelist",
         "title": "Remove from Changelist",
-        "category": "git-cl"
+        "category": "git-cl",
+        "icon": "$(close)"
+      },
+      {
+        "command": "git-cl.openFileDiff",
+        "title": "Open Diff",
+        "category": "git-cl",
+        "icon": "$(diff)"
       },
       {
         "command": "git-cl.deleteChangelist",
@@ -187,6 +194,16 @@
       ],
       "scm/resourceState/context": [
         {
+          "command": "git-cl.openFileDiff",
+          "when": "scmProvider == git-cl && scmResourceGroup =~ /^cl:/",
+          "group": "inline@1"
+        },
+        {
+          "command": "git-cl.removeFromChangelist",
+          "when": "scmProvider == git-cl && scmResourceGroup =~ /^cl:/",
+          "group": "inline@2"
+        },
+        {
           "command": "git-cl.addToChangelist",
           "when": "scmProvider == git",
           "group": "1_modification"
@@ -200,6 +217,11 @@
           "command": "git-cl.removeFromChangelist",
           "when": "scmProvider == git-cl && scmResourceGroup =~ /^cl:/",
           "group": "1_modification"
+        },
+        {
+          "command": "git-cl.openFileDiff",
+          "when": "scmProvider == git-cl && scmResourceGroup =~ /^cl:/",
+          "group": "2_diff"
         }
       ]
     }
