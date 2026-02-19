@@ -209,3 +209,22 @@ export async function gitCheckoutBranch(name: string, gitRoot: string, base?: st
 	}
 	await execGit(args, gitRoot);
 }
+
+/**
+ * Checks if a local branch exists.
+ */
+export async function gitBranchExists(name: string, gitRoot: string): Promise<boolean> {
+	try {
+		await execGit(['rev-parse', '--verify', `refs/heads/${name}`], gitRoot);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Switches to an existing branch.
+ */
+export async function gitCheckoutExistingBranch(name: string, gitRoot: string): Promise<void> {
+	await execGit(['checkout', name], gitRoot);
+}

@@ -99,6 +99,12 @@
         "command": "git-cl.unstashAllChangelists",
         "title": "Unstash All Changelists",
         "category": "git-cl"
+      },
+      {
+        "command": "git-cl.branchFromChangelist",
+        "title": "Branch from Changelist",
+        "category": "git-cl",
+        "icon": "$(git-branch)"
       }
     ],
     "menus": {
@@ -157,6 +163,11 @@
           "command": "git-cl.stashChangelist",
           "when": "scmProvider == git-cl && scmResourceGroup =~ /^cl:/",
           "group": "4_stash@1"
+        },
+        {
+          "command": "git-cl.branchFromChangelist",
+          "when": "scmProvider == git-cl && scmResourceGroup =~ /^cl:/",
+          "group": "5_branch@1"
         },
         {
           "command": "git-cl.unstashChangelist",
