@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
 import { execFile } from 'child_process';
 import { ChangelistStore } from './changelistStore';
 import { StashStore, StashMetadata } from './stashStore';
@@ -35,6 +36,105 @@ class HeadContentProvider implements vscode.TextDocumentContentProvider {
 }
 
 /**
+ * Provides file decorations (status badge + color) for files shown in the
+ * changelist SCM tree. Decorations update whenever the SCM view refreshes.
+ */
+class ChangelistDecorationProvider implements vscode.FileDecorationProvider {
+	private readonly _onDidChangeFileDecorations = new vscode.EventEmitter<vscode.Uri | vscode.Uri[] | undefined>();
+	readonly onDidChangeFileDecorations = this._onDidChangeFileDecorations.event;
+
+	private gitStatus: GitStatusMap = new Map();
+	private trackedUris = new Set<string>();
+	private readonly gitRoot: string;
+
+	constructor(gitRoot: string) {
+		this.gitRoot = gitRoot;
+	}
+
+	update(gitStatus: GitStatusMap, filePaths: Set<string>): void {
+		this.gitStatus = gitStatus;
+		this.trackedUris.clear();
+		for (const fp of filePaths) {
+			this.trackedUris.add(vscode.Uri.file(path.join(this.gitRoot, fp)).toString());
+		}
+		this._onDidChangeFileDecorations.fire(undefined);
+	}
+
+	provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
+		if (uri.scheme !== 'file' || !this.trackedUris.has(uri.toString())) {
+			return undefined;
+		}
+
+		const filePath = path.relative(this.gitRoot, uri.fsPath).split(path.sep).join('/');
+		const status = this.gitStatus.get(filePath);
+		const isGitDeleted = status !== undefined &&
+			(status[1] === 'D' || (status[0] === 'D' && status[1] === ' '));
+
+		// File is in a changelist but no longer on disk and not a git-tracked deletion
+		if (!isGitDeleted && !fs.existsSync(uri.fsPath)) {
+			return new vscode.FileDecoration(
+				'!',
+				'File no longer exists on disk',
+				new vscode.ThemeColor('gitDecoration.deletedResourceForeground')
+			);
+		}
+
+		if (!status) {
+			return undefined;
+		}
+
+		return statusToDecoration(status);
+	}
+
+	dispose(): void {
+		this._onDidChangeFileDecorations.dispose();
+	}
+}
+
+function statusToDecoration(status: string): vscode.FileDecoration | undefined {
+	if (status === '??') {
+		return new vscode.FileDecoration('U', 'Untracked', new vscode.ThemeColor('gitDecoration.untrackedResourceForeground'));
+	}
+
+	const index = status[0];
+	const working = status[1];
+
+	// Conflicts (UU, AA, DD, AU, UA, DU, UD)
+	if (index === 'U' || working === 'U' ||
+		(index === 'A' && working === 'A') ||
+		(index === 'D' && working === 'D')) {
+		return new vscode.FileDecoration('!', 'Conflict', new vscode.ThemeColor('gitDecoration.conflictingResourceForeground'));
+	}
+
+	// Deleted
+	if (working === 'D' || index === 'D') {
+		return new vscode.FileDecoration('D', 'Deleted', new vscode.ThemeColor('gitDecoration.deletedResourceForeground'));
+	}
+
+	// Added
+	if (index === 'A') {
+		return new vscode.FileDecoration('A', 'Added', new vscode.ThemeColor('gitDecoration.addedResourceForeground'));
+	}
+
+	// Renamed
+	if (index === 'R') {
+		return new vscode.FileDecoration('R', 'Renamed', new vscode.ThemeColor('gitDecoration.modifiedResourceForeground'));
+	}
+
+	// Copied
+	if (index === 'C') {
+		return new vscode.FileDecoration('C', 'Copied', new vscode.ThemeColor('gitDecoration.addedResourceForeground'));
+	}
+
+	// Modified
+	if (working === 'M' || index === 'M') {
+		return new vscode.FileDecoration('M', 'Modified', new vscode.ThemeColor('gitDecoration.modifiedResourceForeground'));
+	}
+
+	return undefined;
+}
+
+/**
  * SCM provider that surfaces changelists in the Source Control sidebar.
  *
  * Groups are ordered: [active changelists] → Unassigned → [stashed changelists].
@@ -45,6 +145,7 @@ export class ChangelistSCMProvider implements vscode.Disposable {
 	private readonly scm: vscode.SourceControl;
 	private readonly changelistStore: ChangelistStore;
 	private readonly stashStore: StashStore;
+	private readonly decorationProvider: ChangelistDecorationProvider;
 	private readonly disposables: vscode.Disposable[] = [];
 
 	private changelistGroups = new Map<string, vscode.SourceControlResourceGroup>();
@@ -65,6 +166,13 @@ export class ChangelistSCMProvider implements vscode.Disposable {
 				HEAD_SCHEME,
 				new HeadContentProvider(gitRoot)
 			)
+		);
+
+		// Register file decoration provider for status badges and colors
+		this.decorationProvider = new ChangelistDecorationProvider(gitRoot);
+		this.disposables.push(
+			vscode.window.registerFileDecorationProvider(this.decorationProvider),
+			this.decorationProvider
 		);
 
 		// Create SCM provider
@@ -153,11 +261,13 @@ export class ChangelistSCMProvider implements vscode.Disposable {
 
 		// Update active changelist resource states
 		const assignedFiles = new Set<string>();
+		const allDisplayedFiles = new Set<string>();
 		for (const [name, files] of Object.entries(changelists)) {
 			const group = this.changelistGroups.get(name);
 			if (group) {
 				group.resourceStates = files.map(filePath => {
 					assignedFiles.add(filePath);
+					allDisplayedFiles.add(filePath);
 					return this.createResourceState(filePath, gitStatus);
 				});
 			}
@@ -169,11 +279,15 @@ export class ChangelistSCMProvider implements vscode.Disposable {
 			const unassigned: vscode.SourceControlResourceState[] = [];
 			for (const [filePath] of gitStatus) {
 				if (!assignedFiles.has(filePath) && !stashedFiles.has(filePath)) {
+					allDisplayedFiles.add(filePath);
 					unassigned.push(this.createResourceState(filePath, gitStatus));
 				}
 			}
 			this.unassignedGroup.resourceStates = unassigned;
 		}
+
+		// Update decoration provider with current status for all displayed files
+		this.decorationProvider.update(gitStatus, allDisplayedFiles);
 
 		// Update stashed group resource states and labels
 		for (const [name, meta] of Object.entries(stashData)) {
@@ -199,9 +313,10 @@ export class ChangelistSCMProvider implements vscode.Disposable {
 		const status = gitStatus.get(filePath) ?? '  ';
 		const isDeleted = status[1] === 'D' || (status[0] === 'D' && status[1] === ' ');
 		const isUntracked = status === '??';
+		const isMissing = !isDeleted && !fs.existsSync(uri.fsPath);
 
-		// Untracked files have no HEAD version — just open the file
-		const command: vscode.Command = isUntracked
+		// Untracked or missing files have no HEAD version — just open the file
+		const command: vscode.Command = (isUntracked || isMissing)
 			? { title: 'Open File', command: 'vscode.open', arguments: [uri] }
 			: {
 				title: 'Open Diff',
@@ -213,12 +328,19 @@ export class ChangelistSCMProvider implements vscode.Disposable {
 				]
 			};
 
+		const tooltip = isMissing
+			? `${filePath} [missing from disk]`
+			: `${filePath} [${status.trim() || 'clean'}]`;
+
 		return {
 			resourceUri: uri,
 			command,
 			decorations: {
-				strikeThrough: isDeleted,
-				tooltip: `${filePath} [${status.trim() || 'clean'}]`
+				strikeThrough: isDeleted || isMissing,
+				tooltip,
+				iconPath: isMissing
+					? new vscode.ThemeIcon('warning', new vscode.ThemeColor('problemsWarningIcon.foreground'))
+					: undefined
 			}
 		};
 	}
