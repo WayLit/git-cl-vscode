@@ -42,19 +42,35 @@
         "command": "git-cl.deleteAllChangelists",
         "title": "Delete All Changelists",
         "category": "git-cl"
+      },
+      {
+        "command": "git-cl.stageChangelist",
+        "title": "Stage Changelist",
+        "category": "git-cl",
+        "icon": "$(add)"
       }
     ],
     "menus": {
       "scm/resourceGroup/context": [
         {
-          "command": "git-cl.deleteChangelist",
+          "command": "git-cl.stageChangelist",
           "when": "scmProvider == git-cl && scmResourceGroup =~ /^cl:/",
-          "group": "inline"
+          "group": "inline@1"
         },
         {
           "command": "git-cl.deleteChangelist",
           "when": "scmProvider == git-cl && scmResourceGroup =~ /^cl:/",
-          "group": "1_modification"
+          "group": "inline@9"
+        },
+        {
+          "command": "git-cl.stageChangelist",
+          "when": "scmProvider == git-cl && scmResourceGroup =~ /^cl:/",
+          "group": "1_modification@1"
+        },
+        {
+          "command": "git-cl.deleteChangelist",
+          "when": "scmProvider == git-cl && scmResourceGroup =~ /^cl:/",
+          "group": "1_modification@2"
         }
       ],
       "scm/resourceState/context": [

@@ -29,6 +29,8 @@
 - Command palette invocations get no args — detect and show file picker fallback
 - `when` clause: `scmProvider == git` for built-in Git; `scmProvider == git-cl` for ours
 - `validateChangelistName()` signature matches `showInputBox({ validateInput })` — returns `string | null`
+- SCM group header commands: use `scm/resourceGroup/context` menu; first arg = `SourceControlResourceGroup` (has `.id`)
+- Group ID convention: `cl:<name>` for active changelists, `stash:<name>` for stashed, `unassigned` for unassigned
 
 ## 2026-02-19 - US-001
 - What was implemented: Full VS Code extension scaffold with build tooling
@@ -178,4 +180,44 @@
   - VS Code `when` clauses support regex via `=~` operator — useful for matching dynamic group IDs
   - `ChangelistStore.findChangelist(path)` looks up which changelist owns a file — useful for removal without needing group context
   - Command palette removal shows files with their changelist name as description, helping users identify which list a file belongs to
+---
+
+## 2026-02-19 - US-008
+- What was implemented: Delete Changelist commands with inline button and confirmation
+  - `git-cl.deleteChangelist` command — deletes a single changelist with confirmation prompt
+  - `git-cl.deleteAllChangelists` command — deletes all changelists with confirmation prompt
+  - Inline trash icon button on changelist group headers via `scm/resourceGroup/context` menu
+  - Context menu "Delete Changelist" entry on group headers
+  - Command palette flow: QuickPick to select changelist, then confirmation dialog
+  - Confirmation shows file count (e.g., "3 file(s) will be moved to Unassigned")
+  - `resolveChangelistName()` extracts changelist name from group ID (strips `cl:` prefix)
+  - Tree view refreshes immediately after deletion
+- Files changed:
+  - `package.json` — Added `git-cl.deleteChangelist` + `git-cl.deleteAllChangelists` commands, `scm/resourceGroup/context` menu entries
+  - `src/extension.ts` — Command handlers, `resolveChangelistName()`, `pickChangelistForDeletion()`, `deleteChangelistWithConfirmation()` helpers
+- **Learnings for future iterations:**
+  - `scm/resourceGroup/context` menu is for group headers (vs `scm/resourceState/context` for file items)
+  - Group header context menu args: first arg = `SourceControlResourceGroup` object (has `.id` property)
+  - Use `group: "inline"` in menu contribution to show icon buttons on group headers
+  - `ChangelistStore.deleteChangelist(name)` returns the removed files array (useful for undo if needed later)
+  - `ChangelistStore.deleteAll()` clears all in-memory data; `save()` writes empty object to disk
+---
+
+## 2026-02-19 - US-009
+- What was implemented: Stage Changelist command with inline button and command palette support
+  - `git-cl.stageChangelist` command — stages all tracked files in a changelist
+  - Inline stage button (`+` icon) on changelist group headers via `scm/resourceGroup/context` menu
+  - Context menu "Stage Changelist" entry on group headers
+  - Command palette flow: QuickPick to select changelist, then stage tracked files
+  - Filters to tracked files only — untracked (`??`) files are skipped (matches git-cl behavior)
+  - Shows notification if changelist is empty or has no tracked files
+  - Refactored `pickChangelistForDeletion()` into generic `pickChangelistForAction(action)` for reuse
+- Files changed:
+  - `package.json` — Added `git-cl.stageChangelist` command + inline/context menu entries
+  - `src/extension.ts` — Stage command handler, `pickChangelistForAction()` generic helper
+- **Learnings for future iterations:**
+  - Use `group: "inline@N"` to control ordering of inline buttons on group headers (lower N = further left)
+  - `pickChangelistForAction(scmProvider, action)` is a generic QuickPick helper — reuse for stage, unstage, commit, diff, etc.
+  - Tracked files = files in git status that are NOT `??` (untracked); filter before staging
+  - `gitAdd()` from gitUtils.ts handles the actual `git add` operation
 ---

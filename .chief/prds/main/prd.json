@@ -137,8 +137,8 @@
         "Tree view refreshes immediately"
       ],
       "priority": 8,
-      "passes": false,
-      "inProgress": true
+      "passes": true,
+      "inProgress": false
     },
     {
       "id": "US-009",
@@ -153,7 +153,8 @@
         "Git index and tree view refresh after staging"
       ],
       "priority": 9,
-      "passes": false
+      "passes": true,
+      "inProgress": false
     },
     {
       "id": "US-010",

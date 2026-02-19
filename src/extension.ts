@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { getGitRoot, getGitStatus } from './gitUtils';
+import { getGitRoot, getGitStatus, gitAdd } from './gitUtils';
 import { ChangelistSCMProvider } from './scmProvider';
 import { validateChangelistName } from './changelistStore';
 
@@ -147,7 +147,57 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		}
 	);
 
-	context.subscriptions.push(statusCmd, addToChangelistCmd, removeFromChangelistCmd, deleteChangelistCmd, deleteAllChangelistsCmd);
+	const stageChangelistCmd = vscode.commands.registerCommand(
+		'git-cl.stageChangelist',
+		async (...args: unknown[]) => {
+			const changelistName = resolveChangelistName(scmProvider, args);
+			const name = changelistName ?? await pickChangelistForAction(scmProvider, 'stage');
+			if (!name) {
+				return;
+			}
+
+			const store = scmProvider.getChangelistStore();
+			store.load();
+			const files = store.getFiles(name);
+			if (files.length === 0) {
+				vscode.window.showInformationMessage(`git-cl: Changelist "${name}" is empty.`);
+				return;
+			}
+
+			// Filter to tracked files only (skip untracked "??" files)
+			let gitStatusMap: Map<string, string>;
+			try {
+				gitStatusMap = await getGitStatus(gitRoot);
+			} catch {
+				vscode.window.showErrorMessage('git-cl: Failed to read git status.');
+				return;
+			}
+
+			const trackedFiles = files.filter(f => {
+				const status = gitStatusMap.get(f);
+				return status !== undefined && status !== '??';
+			});
+
+			if (trackedFiles.length === 0) {
+				vscode.window.showInformationMessage(
+					`git-cl: No tracked files to stage in changelist "${name}".`
+				);
+				return;
+			}
+
+			try {
+				await gitAdd(trackedFiles, gitRoot);
+			} catch (e: unknown) {
+				const msg = e instanceof Error ? e.message : String(e);
+				vscode.window.showErrorMessage(`git-cl: Failed to stage files: ${msg}`);
+				return;
+			}
+
+			await scmProvider.refresh();
+		}
+	);
+
+	context.subscriptions.push(statusCmd, addToChangelistCmd, removeFromChangelistCmd, deleteChangelistCmd, deleteAllChangelistsCmd, stageChangelistCmd);
 	outputChannel.appendLine('git-cl extension activated.');
 }
 
@@ -345,12 +395,22 @@ function resolveChangelistName(
 async function pickChangelistForDeletion(
 	scmProvider: ChangelistSCMProvider
 ): Promise<string | undefined> {
+	return pickChangelistForAction(scmProvider, 'delete');
+}
+
+/**
+ * Show QuickPick to select a changelist for a given action (command palette flow).
+ */
+async function pickChangelistForAction(
+	scmProvider: ChangelistSCMProvider,
+	action: string
+): Promise<string | undefined> {
 	const store = scmProvider.getChangelistStore();
 	store.load();
 	const names = store.getNames();
 
 	if (names.length === 0) {
-		vscode.window.showInformationMessage('git-cl: No changelists to delete.');
+		vscode.window.showInformationMessage(`git-cl: No changelists to ${action}.`);
 		return undefined;
 	}
 
@@ -360,7 +420,7 @@ async function pickChangelistForDeletion(
 	}));
 
 	const picked = await vscode.window.showQuickPick(items, {
-		placeHolder: 'Select a changelist to delete',
+		placeHolder: `Select a changelist to ${action}`,
 	});
 
 	return picked?.label;
