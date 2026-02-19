@@ -201,7 +201,8 @@
         "Works correctly for files in subdirectories"
       ],
       "priority": 12,
-      "passes": false
+      "passes": true,
+      "inProgress": false
     },
     {
       "id": "US-013",

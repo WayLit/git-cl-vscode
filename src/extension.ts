@@ -333,7 +333,82 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		}
 	);
 
-	context.subscriptions.push(statusCmd, addToChangelistCmd, removeFromChangelistCmd, deleteChangelistCmd, deleteAllChangelistsCmd, stageChangelistCmd, unstageChangelistCmd, commitChangelistCmd);
+	const diffChangelistCmd = vscode.commands.registerCommand(
+		'git-cl.diffChangelist',
+		async (...args: unknown[]) => {
+			const changelistName = resolveChangelistName(scmProvider, args);
+			const name = changelistName ?? await pickChangelistForAction(scmProvider, 'diff');
+			if (!name) {
+				return;
+			}
+
+			const store = scmProvider.getChangelistStore();
+			store.load();
+			const files = store.getFiles(name);
+			if (files.length === 0) {
+				vscode.window.showInformationMessage(`git-cl: Changelist "${name}" is empty.`);
+				return;
+			}
+
+			// Get git status to determine how to diff each file
+			let gitStatusMap: Map<string, string>;
+			try {
+				gitStatusMap = await getGitStatus(gitRoot);
+			} catch {
+				vscode.window.showErrorMessage('git-cl: Failed to read git status.');
+				return;
+			}
+
+			// Open diff tabs for each file
+			let opened = 0;
+			for (const filePath of files) {
+				const status = gitStatusMap.get(filePath);
+				const fileUri = vscode.Uri.file(path.join(gitRoot, filePath));
+				const isUntracked = status === '??';
+				const isDeleted = status !== undefined &&
+					(status[1] === 'D' || (status[0] === 'D' && status[1] === ' '));
+
+				if (isUntracked) {
+					// Untracked files have no HEAD version — just open the file
+					await vscode.commands.executeCommand('vscode.open', fileUri, {
+						preview: false,
+					});
+				} else if (isDeleted) {
+					// Deleted files — show HEAD version (read-only)
+					const headUri = vscode.Uri.from({
+						scheme: 'git-cl-head',
+						path: `/${filePath}`,
+					});
+					await vscode.commands.executeCommand('vscode.open', headUri, {
+						preview: false,
+					});
+				} else if (status) {
+					// Modified/staged files — show diff (HEAD vs working copy)
+					const headUri = vscode.Uri.from({
+						scheme: 'git-cl-head',
+						path: `/${filePath}`,
+					});
+					await vscode.commands.executeCommand('vscode.diff',
+						headUri,
+						fileUri,
+						`${path.basename(filePath)} (Working Tree)`,
+						{ preview: false }
+					);
+				}
+				// Skip files with no git status (clean files)
+
+				opened++;
+			}
+
+			if (opened === 0) {
+				vscode.window.showInformationMessage(
+					`git-cl: No changed files to diff in changelist "${name}".`
+				);
+			}
+		}
+	);
+
+	context.subscriptions.push(statusCmd, addToChangelistCmd, removeFromChangelistCmd, deleteChangelistCmd, deleteAllChangelistsCmd, stageChangelistCmd, unstageChangelistCmd, commitChangelistCmd, diffChangelistCmd);
 	outputChannel.appendLine('git-cl extension activated.');
 }
 

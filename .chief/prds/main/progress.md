@@ -266,3 +266,24 @@
   - Inline button ordering updated: `inline@1` (stage), `inline@2` (unstage), `inline@3` (commit), `inline@9` (delete)
   - Context menu ordering updated: `1_modification@1` (stage), `1_modification@2` (unstage), `1_modification@3` (commit), `1_modification@4` (delete)
 ---
+
+## 2026-02-19 - US-012
+- What was implemented: Diff Changelist command with context menu and command palette support
+  - `git-cl.diffChangelist` command — opens diff tabs for all files in a changelist
+  - Context menu "Diff Changelist" entry on changelist group headers (group `2_diff@1`)
+  - Command palette flow: QuickPick to select changelist, then open diffs
+  - For modified/staged files: opens `vscode.diff(HEAD, workingCopy)` showing all changes
+  - For untracked files: opens file directly (no HEAD version exists)
+  - For deleted files: opens HEAD version read-only
+  - All tabs opened with `preview: false` so they stay open
+  - Works correctly for files in subdirectories (uses relative paths with forward slashes)
+- Files changed:
+  - `package.json` — Added `git-cl.diffChangelist` command + `scm/resourceGroup/context` menu entry
+  - `src/extension.ts` — Diff command handler using existing `pickChangelistForAction()` and `resolveChangelistName()`
+- **Learnings for future iterations:**
+  - VS Code `vscode.diff` command opens a diff editor tab — use `{ preview: false }` to prevent tab reuse
+  - For multi-file diff, open each file's diff sequentially with `await` to ensure proper tab ordering
+  - Deleted files can be shown read-only via the HEAD content provider (`git-cl-head` scheme)
+  - Menu group `2_diff@1` separates diff actions from modification actions (`1_modification`) in context menus
+  - The `$(diff)` codicon icon is available for diff-related commands
+---

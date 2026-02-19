@@ -60,6 +60,12 @@
         "title": "Commit Changelist",
         "category": "git-cl",
         "icon": "$(check)"
+      },
+      {
+        "command": "git-cl.diffChangelist",
+        "title": "Diff Changelist",
+        "category": "git-cl",
+        "icon": "$(diff)"
       }
     ],
     "menus": {
@@ -103,6 +109,11 @@
           "command": "git-cl.deleteChangelist",
           "when": "scmProvider == git-cl && scmResourceGroup =~ /^cl:/",
           "group": "1_modification@4"
+        },
+        {
+          "command": "git-cl.diffChangelist",
+          "when": "scmProvider == git-cl && scmResourceGroup =~ /^cl:/",
+          "group": "2_diff@1"
         }
       ],
       "scm/resourceState/context": [
