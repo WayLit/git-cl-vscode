@@ -66,6 +66,12 @@
         "title": "Diff Changelist",
         "category": "git-cl",
         "icon": "$(diff)"
+      },
+      {
+        "command": "git-cl.checkoutChangelist",
+        "title": "Checkout (Revert) Changelist",
+        "category": "git-cl",
+        "icon": "$(discard)"
       }
     ],
     "menus": {
@@ -114,6 +120,11 @@
           "command": "git-cl.diffChangelist",
           "when": "scmProvider == git-cl && scmResourceGroup =~ /^cl:/",
           "group": "2_diff@1"
+        },
+        {
+          "command": "git-cl.checkoutChangelist",
+          "when": "scmProvider == git-cl && scmResourceGroup =~ /^cl:/",
+          "group": "3_revert@1"
         }
       ],
       "scm/resourceState/context": [

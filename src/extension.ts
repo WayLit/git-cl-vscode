@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { getGitRoot, getGitStatus, gitAdd, gitReset, gitCommit } from './gitUtils';
+import { getGitRoot, getGitStatus, gitAdd, gitReset, gitCommit, gitCheckout } from './gitUtils';
 import { ChangelistSCMProvider } from './scmProvider';
 import { validateChangelistName } from './changelistStore';
 
@@ -408,7 +408,57 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		}
 	);
 
-	context.subscriptions.push(statusCmd, addToChangelistCmd, removeFromChangelistCmd, deleteChangelistCmd, deleteAllChangelistsCmd, stageChangelistCmd, unstageChangelistCmd, commitChangelistCmd, diffChangelistCmd);
+	const checkoutChangelistCmd = vscode.commands.registerCommand(
+		'git-cl.checkoutChangelist',
+		async (...args: unknown[]) => {
+			const changelistName = resolveChangelistName(scmProvider, args);
+			const name = changelistName ?? await pickChangelistForAction(scmProvider, 'revert');
+			if (!name) {
+				return;
+			}
+
+			const store = scmProvider.getChangelistStore();
+			store.load();
+			const files = store.getFiles(name);
+			if (files.length === 0) {
+				vscode.window.showInformationMessage(`git-cl: Changelist "${name}" is empty.`);
+				return;
+			}
+
+			// Confirmation dialog — warns about data loss
+			const answer = await vscode.window.showWarningMessage(
+				`Revert ${files.length} file(s) in changelist "${name}" to HEAD? This will discard all uncommitted changes and cannot be undone.`,
+				{ modal: true },
+				'Revert',
+				'Revert & Delete Changelist'
+			);
+
+			if (!answer) {
+				return;
+			}
+
+			try {
+				await gitCheckout([...files], gitRoot);
+			} catch (e: unknown) {
+				const msg = e instanceof Error ? e.message : String(e);
+				vscode.window.showErrorMessage(`git-cl: Revert failed: ${msg}`);
+				return;
+			}
+
+			// Delete the changelist if requested
+			if (answer === 'Revert & Delete Changelist') {
+				store.deleteChangelist(name);
+				store.save();
+			}
+
+			await scmProvider.refresh();
+			vscode.window.showInformationMessage(
+				`git-cl: Reverted ${files.length} file(s) in "${name}" to HEAD.`
+			);
+		}
+	);
+
+	context.subscriptions.push(statusCmd, addToChangelistCmd, removeFromChangelistCmd, deleteChangelistCmd, deleteAllChangelistsCmd, stageChangelistCmd, unstageChangelistCmd, commitChangelistCmd, diffChangelistCmd, checkoutChangelistCmd);
 	outputChannel.appendLine('git-cl extension activated.');
 }
 
