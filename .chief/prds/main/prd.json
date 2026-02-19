@@ -168,7 +168,8 @@
         "Git index and tree view refresh after unstaging"
       ],
       "priority": 10,
-      "passes": false
+      "passes": true,
+      "inProgress": false
     },
     {
       "id": "US-011",
@@ -185,7 +186,8 @@
         "Tree view refreshes after commit"
       ],
       "priority": 11,
-      "passes": false
+      "passes": true,
+      "inProgress": false
     },
     {
       "id": "US-012",

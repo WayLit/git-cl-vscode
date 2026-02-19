@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { getGitRoot, getGitStatus, gitAdd, gitReset } from './gitUtils';
+import { getGitRoot, getGitStatus, gitAdd, gitReset, gitCommit } from './gitUtils';
 import { ChangelistSCMProvider } from './scmProvider';
 import { validateChangelistName } from './changelistStore';
 
@@ -252,7 +252,88 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		}
 	);
 
-	context.subscriptions.push(statusCmd, addToChangelistCmd, removeFromChangelistCmd, deleteChangelistCmd, deleteAllChangelistsCmd, stageChangelistCmd, unstageChangelistCmd);
+	const commitChangelistCmd = vscode.commands.registerCommand(
+		'git-cl.commitChangelist',
+		async (...args: unknown[]) => {
+			const changelistName = resolveChangelistName(scmProvider, args);
+			const name = changelistName ?? await pickChangelistForAction(scmProvider, 'commit');
+			if (!name) {
+				return;
+			}
+
+			const store = scmProvider.getChangelistStore();
+			store.load();
+			const files = store.getFiles(name);
+			if (files.length === 0) {
+				vscode.window.showInformationMessage(`git-cl: Changelist "${name}" is empty.`);
+				return;
+			}
+
+			// Filter to tracked files only (skip untracked "??" files)
+			let gitStatusMap: Map<string, string>;
+			try {
+				gitStatusMap = await getGitStatus(gitRoot);
+			} catch {
+				vscode.window.showErrorMessage('git-cl: Failed to read git status.');
+				return;
+			}
+
+			const trackedFiles = files.filter(f => {
+				const status = gitStatusMap.get(f);
+				return status !== undefined && status !== '??';
+			});
+
+			if (trackedFiles.length === 0) {
+				vscode.window.showErrorMessage(
+					`git-cl: No tracked files to commit in changelist "${name}".`
+				);
+				return;
+			}
+
+			// Get commit message: prefer SCM input box text, else prompt
+			const scmInputBox = scmProvider.getSourceControl().inputBox;
+			let message = scmInputBox.value.trim();
+
+			if (!message) {
+				const input = await vscode.window.showInputBox({
+					prompt: `Commit message for changelist "${name}"`,
+					placeHolder: 'Enter commit message',
+					validateInput: value => {
+						if (!value || value.trim().length === 0) {
+							return 'Commit message cannot be empty';
+						}
+						return null;
+					},
+				});
+				if (!input) {
+					return;
+				}
+				message = input.trim();
+			}
+
+			try {
+				await gitCommit(trackedFiles, message, gitRoot);
+			} catch (e: unknown) {
+				const msg = e instanceof Error ? e.message : String(e);
+				vscode.window.showErrorMessage(`git-cl: Commit failed: ${msg}`);
+				return;
+			}
+
+			// Clear the SCM input box after successful commit
+			scmInputBox.value = '';
+
+			// Delete the changelist after commit (default behavior)
+			store.deleteChangelist(name);
+			store.save();
+
+			await scmProvider.refresh();
+			vscode.window.showInformationMessage(
+				`git-cl: Committed ${trackedFiles.length} file(s) from "${name}".`
+			);
+		}
+	);
+
+	context.subscriptions.push(statusCmd, addToChangelistCmd, removeFromChangelistCmd, deleteChangelistCmd, deleteAllChangelistsCmd, stageChangelistCmd, unstageChangelistCmd, commitChangelistCmd);
 	outputChannel.appendLine('git-cl extension activated.');
 }
 

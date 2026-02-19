@@ -31,6 +31,9 @@
 - `validateChangelistName()` signature matches `showInputBox({ validateInput })` — returns `string | null`
 - SCM group header commands: use `scm/resourceGroup/context` menu; first arg = `SourceControlResourceGroup` (has `.id`)
 - Group ID convention: `cl:<name>` for active changelists, `stash:<name>` for stashed, `unassigned` for unassigned
+- SCM input box access: `scmProvider.getSourceControl().inputBox.value` — prefer over always prompting for commit messages
+- Inline button ordering: `inline@1` (stage), `inline@2` (unstage), `inline@3` (commit), `inline@9` (delete)
+- Context menu ordering: `1_modification@1` (stage), `1_modification@2` (unstage), `1_modification@3` (commit), `1_modification@4` (delete)
 
 ## 2026-02-19 - US-001
 - What was implemented: Full VS Code extension scaffold with build tooling
@@ -220,4 +223,46 @@
   - `pickChangelistForAction(scmProvider, action)` is a generic QuickPick helper — reuse for stage, unstage, commit, diff, etc.
   - Tracked files = files in git status that are NOT `??` (untracked); filter before staging
   - `gitAdd()` from gitUtils.ts handles the actual `git add` operation
+---
+
+## 2026-02-19 - US-010
+- What was implemented: Unstage Changelist command with inline button and command palette support
+  - `git-cl.unstageChangelist` command — unstages all staged files in a changelist
+  - Inline unstage button (`-` icon) on changelist group headers via `scm/resourceGroup/context` menu (inline@2)
+  - Context menu "Unstage Changelist" entry on group headers (1_modification@2)
+  - Command palette flow: QuickPick to select changelist, then unstage staged files
+  - Filters to files with staged changes only — checks first char of porcelain status (non-space, non-?)
+  - Shows notification if changelist is empty or has no staged files
+  - Uses `gitReset()` from gitUtils.ts to execute `git reset HEAD --`
+- Files changed:
+  - `package.json` — Added `git-cl.unstageChangelist` command + inline/context menu entries
+  - `src/extension.ts` — Unstage command handler, imported `gitReset`
+- **Learnings for future iterations:**
+  - Staged files detection: in `git status --porcelain`, first char (index status) is non-space and non-`?` for staged files
+  - `gitReset()` from gitUtils.ts handles `git reset HEAD --` for unstaging
+  - Inline button ordering: `inline@1` (stage), `inline@2` (unstage), `inline@9` (delete) — use gaps for future insertions
+  - Context menu ordering: `1_modification@1` (stage), `1_modification@2` (unstage), `1_modification@3` (delete)
+---
+
+## 2026-02-19 - US-011
+- What was implemented: Commit Changelist command with inline button and command palette support
+  - `git-cl.commitChangelist` command — commits all tracked files in a changelist with a message
+  - Inline commit button (`check` icon) on changelist group headers via `scm/resourceGroup/context` menu (inline@3)
+  - Context menu "Commit Changelist" entry on group headers (1_modification@3)
+  - Command palette flow: QuickPick to select changelist, then prompt for message
+  - Commit message sourcing: uses SCM input box text if present, otherwise prompts via InputBox
+  - Filters to tracked files only — untracked (`??`) files are skipped
+  - Shows error if no tracked files or commit fails
+  - Deletes changelist after successful commit (default behavior)
+  - Clears SCM input box after successful commit
+  - Success notification shows count of committed files
+  - Uses `gitCommit()` from gitUtils.ts which stages then commits
+- Files changed:
+  - `package.json` — Added `git-cl.commitChangelist` command + inline/context menu entries
+  - `src/extension.ts` — Commit command handler, imported `gitCommit`
+- **Learnings for future iterations:**
+  - `scmProvider.getSourceControl().inputBox.value` gives access to the SCM input box text — prefer this over always prompting
+  - `gitCommit()` in gitUtils.ts handles both staging and committing in one call
+  - Inline button ordering updated: `inline@1` (stage), `inline@2` (unstage), `inline@3` (commit), `inline@9` (delete)
+  - Context menu ordering updated: `1_modification@1` (stage), `1_modification@2` (unstage), `1_modification@3` (commit), `1_modification@4` (delete)
 ---

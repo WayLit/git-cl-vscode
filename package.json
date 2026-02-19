@@ -54,6 +54,12 @@
         "title": "Unstage Changelist",
         "category": "git-cl",
         "icon": "$(remove)"
+      },
+      {
+        "command": "git-cl.commitChangelist",
+        "title": "Commit Changelist",
+        "category": "git-cl",
+        "icon": "$(check)"
       }
     ],
     "menus": {
@@ -67,6 +73,11 @@
           "command": "git-cl.unstageChangelist",
           "when": "scmProvider == git-cl && scmResourceGroup =~ /^cl:/",
           "group": "inline@2"
+        },
+        {
+          "command": "git-cl.commitChangelist",
+          "when": "scmProvider == git-cl && scmResourceGroup =~ /^cl:/",
+          "group": "inline@3"
         },
         {
           "command": "git-cl.deleteChangelist",
@@ -84,9 +95,14 @@
           "group": "1_modification@2"
         },
         {
-          "command": "git-cl.deleteChangelist",
+          "command": "git-cl.commitChangelist",
           "when": "scmProvider == git-cl && scmResourceGroup =~ /^cl:/",
           "group": "1_modification@3"
+        },
+        {
+          "command": "git-cl.deleteChangelist",
+          "when": "scmProvider == git-cl && scmResourceGroup =~ /^cl:/",
+          "group": "1_modification@4"
         }
       ],
       "scm/resourceState/context": [
