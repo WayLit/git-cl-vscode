@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { getGitRoot, getGitStatus, gitAdd } from './gitUtils';
+import { getGitRoot, getGitStatus, gitAdd, gitReset } from './gitUtils';
 import { ChangelistSCMProvider } from './scmProvider';
 import { validateChangelistName } from './changelistStore';
 
@@ -197,7 +197,62 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		}
 	);
 
-	context.subscriptions.push(statusCmd, addToChangelistCmd, removeFromChangelistCmd, deleteChangelistCmd, deleteAllChangelistsCmd, stageChangelistCmd);
+	const unstageChangelistCmd = vscode.commands.registerCommand(
+		'git-cl.unstageChangelist',
+		async (...args: unknown[]) => {
+			const changelistName = resolveChangelistName(scmProvider, args);
+			const name = changelistName ?? await pickChangelistForAction(scmProvider, 'unstage');
+			if (!name) {
+				return;
+			}
+
+			const store = scmProvider.getChangelistStore();
+			store.load();
+			const files = store.getFiles(name);
+			if (files.length === 0) {
+				vscode.window.showInformationMessage(`git-cl: Changelist "${name}" is empty.`);
+				return;
+			}
+
+			// Filter to files with staged changes only
+			// In git status --porcelain, first char is index status; non-space/non-? means staged
+			let gitStatusMap: Map<string, string>;
+			try {
+				gitStatusMap = await getGitStatus(gitRoot);
+			} catch {
+				vscode.window.showErrorMessage('git-cl: Failed to read git status.');
+				return;
+			}
+
+			const stagedFiles = files.filter(f => {
+				const status = gitStatusMap.get(f);
+				if (!status) {
+					return false;
+				}
+				const indexStatus = status[0];
+				return indexStatus !== ' ' && indexStatus !== '?';
+			});
+
+			if (stagedFiles.length === 0) {
+				vscode.window.showInformationMessage(
+					`git-cl: No staged files to unstage in changelist "${name}".`
+				);
+				return;
+			}
+
+			try {
+				await gitReset(stagedFiles, gitRoot);
+			} catch (e: unknown) {
+				const msg = e instanceof Error ? e.message : String(e);
+				vscode.window.showErrorMessage(`git-cl: Failed to unstage files: ${msg}`);
+				return;
+			}
+
+			await scmProvider.refresh();
+		}
+	);
+
+	context.subscriptions.push(statusCmd, addToChangelistCmd, removeFromChangelistCmd, deleteChangelistCmd, deleteAllChangelistsCmd, stageChangelistCmd, unstageChangelistCmd);
 	outputChannel.appendLine('git-cl extension activated.');
 }
 
