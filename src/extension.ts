@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { getGitRoot, getGitStatus, gitAdd, gitReset, gitCommit, gitCheckout, gitStashPush, gitStashDrop, gitStashPop, getCurrentBranch } from './gitUtils';
+import { getGitRoot, getGitStatus, gitAdd, gitReset, gitCommit, gitCheckout, gitStashPush, gitStashDrop, gitStashPop, gitStashList, getCurrentBranch } from './gitUtils';
 import { ChangelistSCMProvider } from './scmProvider';
 import { validateChangelistName } from './changelistStore';
 import { FileCategories, StashMetadata } from './stashStore';
@@ -506,7 +506,74 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		}
 	);
 
-	context.subscriptions.push(statusCmd, addToChangelistCmd, removeFromChangelistCmd, deleteChangelistCmd, deleteAllChangelistsCmd, stageChangelistCmd, unstageChangelistCmd, commitChangelistCmd, diffChangelistCmd, checkoutChangelistCmd, stashChangelistCmd, stashAllChangelistsCmd);
+	const unstashChangelistCmd = vscode.commands.registerCommand(
+		'git-cl.unstashChangelist',
+		async (...args: unknown[]) => {
+			const stashName = resolveStashName(args);
+			const name = stashName ?? await pickStashedChangelistForAction(scmProvider, 'unstash');
+			if (!name) {
+				return;
+			}
+
+			const success = await unstashSingleChangelist(scmProvider, name, gitRoot, false);
+			if (success) {
+				await scmProvider.refresh();
+				vscode.window.showInformationMessage(
+					`git-cl: Unstashed changelist "${name}".`
+				);
+			}
+		}
+	);
+
+	const unstashForceChangelistCmd = vscode.commands.registerCommand(
+		'git-cl.unstashChangelistForce',
+		async (...args: unknown[]) => {
+			const stashName = resolveStashName(args);
+			const name = stashName ?? await pickStashedChangelistForAction(scmProvider, 'force unstash');
+			if (!name) {
+				return;
+			}
+
+			const success = await unstashSingleChangelist(scmProvider, name, gitRoot, true);
+			if (success) {
+				await scmProvider.refresh();
+				vscode.window.showInformationMessage(
+					`git-cl: Unstashed changelist "${name}".`
+				);
+			}
+		}
+	);
+
+	const unstashAllChangelistsCmd = vscode.commands.registerCommand(
+		'git-cl.unstashAllChangelists',
+		async () => {
+			const stashStore = scmProvider.getStashStore();
+			stashStore.load();
+			const names = [...stashStore.getNames()];
+
+			if (names.length === 0) {
+				vscode.window.showInformationMessage('git-cl: No stashed changelists to unstash.');
+				return;
+			}
+
+			let unstashedCount = 0;
+			for (const name of names) {
+				const success = await unstashSingleChangelist(scmProvider, name, gitRoot, false);
+				if (success) {
+					unstashedCount++;
+				}
+			}
+
+			await scmProvider.refresh();
+			if (unstashedCount > 0) {
+				vscode.window.showInformationMessage(
+					`git-cl: Unstashed ${unstashedCount} changelist(s).`
+				);
+			}
+		}
+	);
+
+	context.subscriptions.push(statusCmd, addToChangelistCmd, removeFromChangelistCmd, deleteChangelistCmd, deleteAllChangelistsCmd, stageChangelistCmd, unstageChangelistCmd, commitChangelistCmd, diffChangelistCmd, checkoutChangelistCmd, stashChangelistCmd, stashAllChangelistsCmd, unstashChangelistCmd, unstashForceChangelistCmd, unstashAllChangelistsCmd);
 	outputChannel.appendLine('git-cl extension activated.');
 }
 
@@ -899,6 +966,200 @@ async function stashSingleChangelist(
 		} catch { /* best effort */ }
 		const msg = e instanceof Error ? e.message : String(e);
 		vscode.window.showErrorMessage(`git-cl: Failed to update changelist data: ${msg}`);
+		return false;
+	}
+
+	return true;
+}
+
+/**
+ * Resolve stash changelist name from context menu args (stashed group header click).
+ * Returns the name or undefined if not invoked from a stashed group header.
+ */
+function resolveStashName(args: unknown[]): string | undefined {
+	if (args.length < 1 || !args[0]) {
+		return undefined;
+	}
+
+	const group = args[0] as vscode.SourceControlResourceGroup;
+	if (typeof group.id !== 'string' || !group.id.startsWith('stash:')) {
+		return undefined;
+	}
+
+	return group.id.slice(6); // strip "stash:" prefix
+}
+
+/**
+ * Show QuickPick to select a stashed changelist for an action (command palette flow).
+ */
+async function pickStashedChangelistForAction(
+	scmProvider: ChangelistSCMProvider,
+	action: string
+): Promise<string | undefined> {
+	const stashStore = scmProvider.getStashStore();
+	stashStore.load();
+	const names = stashStore.getNames();
+
+	if (names.length === 0) {
+		vscode.window.showInformationMessage(`git-cl: No stashed changelists to ${action}.`);
+		return undefined;
+	}
+
+	const items: vscode.QuickPickItem[] = names.map(name => {
+		const meta = stashStore.getStash(name);
+		const date = meta ? new Date(meta.timestamp).toLocaleString() : '';
+		const branch = meta?.source_branch ?? '';
+		return {
+			label: name,
+			description: `${meta?.files.length ?? 0} file(s) — from ${branch}, ${date}`,
+		};
+	});
+
+	const picked = await vscode.window.showQuickPick(items, {
+		placeHolder: `Select a stashed changelist to ${action}`,
+	});
+
+	return picked?.label;
+}
+
+/**
+ * Find the actual stash reference by matching the stash message.
+ * Stash indices shift when stashes are created/dropped, so we search
+ * by the unique message stored in metadata.
+ */
+async function findStashRefByMessage(
+	stashMessage: string,
+	gitRoot: string
+): Promise<string | undefined> {
+	const entries = await gitStashList(gitRoot);
+	for (const entry of entries) {
+		if (entry.message.includes(stashMessage)) {
+			return entry.ref;
+		}
+	}
+	return undefined;
+}
+
+/**
+ * Unstash a single changelist: validate branch/conflicts, find stash ref,
+ * pop stash, and restore changelist to cl.json.
+ * If force is true, skip branch and conflict checks.
+ * Returns true on success, false on failure (with error shown to user).
+ */
+async function unstashSingleChangelist(
+	scmProvider: ChangelistSCMProvider,
+	name: string,
+	gitRoot: string,
+	force: boolean
+): Promise<boolean> {
+	const stashStore = scmProvider.getStashStore();
+	stashStore.load();
+	const metadata = stashStore.getStash(name);
+
+	if (!metadata) {
+		vscode.window.showErrorMessage(`git-cl: No stash found for changelist "${name}".`);
+		return false;
+	}
+
+	if (!force) {
+		// Branch validation: warn if current branch differs from source branch
+		let currentBranch: string;
+		try {
+			currentBranch = await getCurrentBranch(gitRoot) ?? 'HEAD';
+		} catch {
+			currentBranch = 'HEAD';
+		}
+
+		if (metadata.source_branch !== 'HEAD' && currentBranch !== metadata.source_branch) {
+			const answer = await vscode.window.showWarningMessage(
+				`Changelist "${name}" was stashed from branch "${metadata.source_branch}", but you are on "${currentBranch}". Unstash anyway?`,
+				{ modal: true },
+				'Unstash Anyway',
+				'Cancel'
+			);
+			if (answer !== 'Unstash Anyway') {
+				return false;
+			}
+		}
+
+		// Conflict detection: check if stashed files conflict with current working tree
+		let gitStatusMap: Map<string, string>;
+		try {
+			gitStatusMap = await getGitStatus(gitRoot);
+		} catch {
+			vscode.window.showErrorMessage('git-cl: Failed to read git status.');
+			return false;
+		}
+
+		const conflicts: string[] = [];
+		for (const filePath of metadata.files) {
+			const status = gitStatusMap.get(filePath);
+			if (status) {
+				conflicts.push(filePath);
+			}
+		}
+
+		if (conflicts.length > 0) {
+			const suggestions = [
+				'Commit the conflicting files',
+				'Stash the conflicting files',
+				'Discard changes to the conflicting files',
+			];
+			const answer = await vscode.window.showWarningMessage(
+				`${conflicts.length} file(s) in stashed changelist "${name}" conflict with your working tree:\n${conflicts.slice(0, 5).join(', ')}${conflicts.length > 5 ? '...' : ''}\n\nSuggestions: ${suggestions.join('; ')}.`,
+				{ modal: true },
+				'Unstash Anyway',
+				'Cancel'
+			);
+			if (answer !== 'Unstash Anyway') {
+				return false;
+			}
+		}
+	}
+
+	// Find the correct stash ref by matching the stash message
+	const stashRef = await findStashRefByMessage(metadata.stash_message, gitRoot);
+	if (!stashRef) {
+		vscode.window.showErrorMessage(
+			`git-cl: Could not find git stash for changelist "${name}". The stash may have been manually dropped.`
+		);
+		return false;
+	}
+
+	// Pop the stash
+	try {
+		await gitStashPop(stashRef, gitRoot);
+	} catch (e: unknown) {
+		const msg = e instanceof Error ? e.message : String(e);
+		vscode.window.showErrorMessage(`git-cl: Failed to unstash changelist "${name}": ${msg}`);
+		return false;
+	}
+
+	// Remove from stash store first (so addFiles won't reject stashed file conflicts)
+	try {
+		stashStore.removeStash(name);
+		stashStore.save();
+	} catch (e: unknown) {
+		const msg = e instanceof Error ? e.message : String(e);
+		vscode.window.showErrorMessage(`git-cl: Failed to update stash metadata: ${msg}`);
+		return false;
+	}
+
+	// Restore changelist to cl.json
+	const store = scmProvider.getChangelistStore();
+	store.load();
+
+	try {
+		store.addFiles(name, metadata.files, stashStore);
+		store.save();
+	} catch (e: unknown) {
+		// Rollback: restore stash metadata
+		try {
+			stashStore.setStash(name, metadata);
+			stashStore.save();
+		} catch { /* best effort */ }
+		const msg = e instanceof Error ? e.message : String(e);
+		vscode.window.showErrorMessage(`git-cl: Failed to restore changelist data: ${msg}`);
 		return false;
 	}
 

@@ -273,7 +273,8 @@
         "Tree view refreshes to show restored changelist in active section"
       ],
       "priority": 16,
-      "passes": false
+      "passes": true,
+      "inProgress": false
     },
     {
       "id": "US-017",

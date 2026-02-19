@@ -34,6 +34,9 @@
 - SCM input box access: `scmProvider.getSourceControl().inputBox.value` — prefer over always prompting for commit messages
 - Inline button ordering: `inline@1` (stage), `inline@2` (unstage), `inline@3` (commit), `inline@9` (delete)
 - Context menu ordering: `1_modification@1` (stage), `1_modification@2` (unstage), `1_modification@3` (commit), `1_modification@4` (delete)
+- Stash group IDs: `stash:<name>` prefix; use `resolveStashName()` to extract name
+- Must remove from stash store BEFORE adding files to changelist store during unstash (avoids stash conflict check)
+- Find stash ref by message via `findStashRefByMessage()` — stash indices shift, message is stable
 
 ## 2026-02-19 - US-001
 - What was implemented: Full VS Code extension scaffold with build tooling
@@ -353,4 +356,30 @@
   - `StashStore.setStash(name, metadata)` adds/updates an entry; `StashStore.removeStash(name)` removes it
   - Menu group `4_stash@1` keeps stash action separate from modification, diff, and revert groups
   - `FileCategories` and `StashMetadata` types are exported from stashStore.ts for use in extension.ts
+---
+
+## 2026-02-19 - US-016
+- What was implemented: Unstash Changelist command with branch/conflict validation
+  - `git-cl.unstashChangelist` command — unstashes a changelist with branch and conflict validation
+  - `git-cl.unstashChangelistForce` command — unstashes without branch/conflict checks (force mode)
+  - `git-cl.unstashAllChangelists` command — unstashes all stashed changelists sequentially
+  - Context menu "Unstash Changelist" on stashed changelist group headers (inline + context)
+  - Context menu "Unstash Changelist (Force)" for skipping validation checks
+  - Branch validation: warns if current branch differs from source branch where stash was created
+  - Conflict detection: checks if stashed files have uncommitted changes in working tree, suggests workflow actions
+  - Finds correct stash reference by matching stash message (handles shifted stash indices)
+  - Executes `git stash pop` and restores changelist to cl.json
+  - Order: removes from stash store first, then adds to changelist store (avoids stash conflict check)
+  - Rollback: restores stash metadata if cl.json update fails
+  - Tree view refreshes to show restored changelist in active section
+- Files changed:
+  - `package.json` — Added `git-cl.unstashChangelist`, `git-cl.unstashChangelistForce`, `git-cl.unstashAllChangelists` commands + inline/context menu entries for stashed groups
+  - `src/extension.ts` — Unstash command handlers, `resolveStashName()`, `pickStashedChangelistForAction()`, `findStashRefByMessage()`, `unstashSingleChangelist()` helper functions; added `gitStashList` import
+- **Learnings for future iterations:**
+  - Stash group IDs use `stash:<name>` prefix — use `resolveStashName()` to extract name (strips `stash:` prefix)
+  - `when` clause for stashed groups: `scmResourceGroup =~ /^stash:/`
+  - Must remove from stash store BEFORE adding files to changelist store — `addFiles()` checks stash conflicts and would reject files still in stash
+  - `findStashRefByMessage()` searches `gitStashList()` by message match, since stash indices shift when stashes are created/dropped
+  - `gitStashList()` returns entries with `message` that includes the full stash line after first colon — use `includes()` for matching
+  - Force mode (`--force` equivalent) skips branch and conflict validation entirely
 ---
