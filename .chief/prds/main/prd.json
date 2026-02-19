@@ -320,7 +320,8 @@
         "Buttons are defined in contributes.menus with appropriate when clauses"
       ],
       "priority": 19,
-      "passes": false
+      "passes": true,
+      "inProgress": false
     },
     {
       "id": "US-020",
@@ -334,7 +335,8 @@
         "Works correctly when switching branches (git status changes entirely)"
       ],
       "priority": 20,
-      "passes": false
+      "passes": true,
+      "inProgress": false
     },
     {
       "id": "US-021",
@@ -349,7 +351,8 @@
         "At least 80% code coverage on core data model modules"
       ],
       "priority": 21,
-      "passes": false
+      "passes": true,
+      "inProgress": false
     },
     {
       "id": "US-022",
@@ -364,7 +367,8 @@
         "No unhandled promise rejections — all async operations have error boundaries"
       ],
       "priority": 22,
-      "passes": false
+      "passes": true,
+      "inProgress": false
     }
   ]
 }

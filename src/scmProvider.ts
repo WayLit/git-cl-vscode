@@ -155,8 +155,9 @@ export class ChangelistSCMProvider implements vscode.Disposable {
 	private refreshTimeout: ReturnType<typeof setTimeout> | undefined;
 	private lastActiveKeys = '';
 	private lastStashedKeys = '';
+	private lastWarnedMissingFiles = new Set<string>();
 
-	constructor(private readonly gitRoot: string) {
+	constructor(private readonly gitRoot: string, private readonly outputChannel?: vscode.OutputChannel) {
 		this.changelistStore = new ChangelistStore(gitRoot);
 		this.stashStore = new StashStore(gitRoot);
 
@@ -181,7 +182,10 @@ export class ChangelistSCMProvider implements vscode.Disposable {
 		this.disposables.push(this.scm);
 
 		this.setupWatchers();
-		this.refresh();
+		this.refresh().catch(err => {
+			const msg = err instanceof Error ? err.message : String(err);
+			this.outputChannel?.appendLine(`git-cl: Initial refresh error: ${msg}`);
+		});
 	}
 
 	private setupWatchers(): void {
@@ -209,7 +213,12 @@ export class ChangelistSCMProvider implements vscode.Disposable {
 		if (this.refreshTimeout) {
 			clearTimeout(this.refreshTimeout);
 		}
-		this.refreshTimeout = setTimeout(() => this.refresh(), 300);
+		this.refreshTimeout = setTimeout(() => {
+			this.refresh().catch(err => {
+				const msg = err instanceof Error ? err.message : String(err);
+				this.outputChannel?.appendLine(`git-cl: Refresh error: ${msg}`);
+			});
+		}, 300);
 	}
 
 	async refresh(): Promise<void> {
@@ -219,7 +228,9 @@ export class ChangelistSCMProvider implements vscode.Disposable {
 		let gitStatus: GitStatusMap;
 		try {
 			gitStatus = await getGitStatus(this.gitRoot);
-		} catch {
+		} catch (err) {
+			const errMsg = err instanceof Error ? err.message : String(err);
+			this.outputChannel?.appendLine(`git-cl: Failed to read git status: ${errMsg}`);
 			gitStatus = new Map();
 		}
 
@@ -288,6 +299,30 @@ export class ChangelistSCMProvider implements vscode.Disposable {
 
 		// Update decoration provider with current status for all displayed files
 		this.decorationProvider.update(gitStatus, allDisplayedFiles);
+
+		// Check for files in changelists that no longer exist on disk
+		const currentMissingFiles = new Set<string>();
+		for (const files of Object.values(changelists)) {
+			for (const filePath of files) {
+				const status = gitStatus.get(filePath);
+				const isGitDeleted = status !== undefined &&
+					(status[1] === 'D' || (status[0] === 'D' && status[1] === ' '));
+				if (!isGitDeleted && !fs.existsSync(path.join(this.gitRoot, filePath))) {
+					currentMissingFiles.add(filePath);
+				}
+			}
+		}
+
+		// Warn about newly missing files (avoid repeating for already-warned files)
+		const newlyMissing = [...currentMissingFiles].filter(f => !this.lastWarnedMissingFiles.has(f));
+		if (newlyMissing.length > 0) {
+			const fileList = newlyMissing.slice(0, 3).join(', ');
+			const suffix = newlyMissing.length > 3 ? ` and ${newlyMissing.length - 3} more` : '';
+			vscode.window.showWarningMessage(
+				`git-cl: ${newlyMissing.length} file(s) in changelists no longer exist on disk: ${fileList}${suffix}`
+			);
+		}
+		this.lastWarnedMissingFiles = currentMissingFiles;
 
 		// Update stashed group resource states and labels
 		for (const [name, meta] of Object.entries(stashData)) {

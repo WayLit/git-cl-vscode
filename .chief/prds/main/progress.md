@@ -39,6 +39,8 @@
 - Find stash ref by message via `findStashRefByMessage()` — stash indices shift, message is stable
 - Branch existence check: `gitBranchExists()` uses `git rev-parse --verify refs/heads/<name>`
 - `gitCheckoutExistingBranch()` switches to an existing branch (vs `gitCheckoutBranch()` which creates new)
+- Inline file buttons: `scm/resourceState/context` with `group: "inline@N"` — commands MUST have `icon` property
+- File inline button ordering: `inline@1` (Open Diff), `inline@2` (Remove from CL)
 
 ## 2026-02-19 - US-001
 - What was implemented: Full VS Code extension scaffold with build tooling
@@ -421,4 +423,90 @@
   - US-018 was fully covered by US-006 implementation — the built-in Git SCM integration was done alongside the general "Add to Changelist" command
   - The built-in Git extension's `resourceUri` is always a `file://` URI, so `fsPath` gives the correct absolute path
   - `scmProvider == git` when clause automatically limits menu visibility to git repositories
+---
+
+## 2026-02-19 - US-019
+- What was implemented: Inline action buttons on changelist file entries and group headers
+  - Inline "Open Diff" (`$(diff)` icon) button on individual file entries in active changelists (`inline@1`)
+  - Inline "Remove from Changelist" (`$(close)` icon) button on individual file entries in active changelists (`inline@2`)
+  - New `git-cl.openFileDiff` command — opens diff (HEAD vs working tree) for a single file from inline button
+  - Added icon to `removeFromChangelist` command definition for inline button rendering
+  - Context menu "Open Diff" entry also added to file items in active changelists (`2_diff` group)
+  - Pre-existing group header buttons: Stage (+), Unstage (-), Commit (check), Delete (trash) — already implemented in prior stories
+  - Pre-existing stash group inline button: Unstash — already implemented in US-016
+- Files changed:
+  - `package.json` — Added `git-cl.openFileDiff` command, icon for `removeFromChangelist`, inline + context menu entries in `scm/resourceState/context`
+  - `src/extension.ts` — Added `openFileDiff` command handler, registered in subscriptions
+- **Learnings for future iterations:**
+  - `scm/resourceState/context` with `group: "inline@N"` adds icon buttons next to individual file entries (same pattern as group headers)
+  - Inline button ordering for files: `inline@1` (Open Diff), `inline@2` (Remove) — leftmost is lowest number
+  - File inline buttons need separate entries from context menu entries (inline vs numbered group)
+  - The `openFileDiff` command reuses the same diff logic as the resource state's click command (HEAD scheme + `vscode.diff`)
+  - Commands used as inline buttons MUST have an `icon` property in their command definition, otherwise no button is shown
+---
+
+## 2026-02-19 - US-020
+- What was implemented: File Watcher & Auto-Refresh — verified existing implementation and added HEAD file watching
+  - FileSystemWatcher already monitors `.git/cl.json`, `.git/cl-stashes.json`, and `.git/index` (from US-004)
+  - Added `.git/HEAD` to watched file patterns for robust branch switch detection
+  - Debounced refresh at 300ms (well within the 500ms requirement) prevents excessive updates
+  - `onDidSaveTextDocument` handler triggers refresh when files are saved (git status may change)
+  - Branch switching triggers refresh via both `index` and `HEAD` file watchers
+  - All acceptance criteria were already substantially met by US-004's implementation
+- Files changed:
+  - `src/scmProvider.ts` — Added `HEAD` to watched file patterns in `setupWatchers()`
+- **Learnings for future iterations:**
+  - Most of US-020 was already implemented in US-004 — the file watcher infrastructure was built alongside the SCM provider
+  - `.git/HEAD` changes when switching branches (`git checkout`, `git switch`) — watching it provides an additional signal beyond the index watcher
+  - VS Code's `files.watcherExclude` default excludes `.git/objects/**` and `.git/subtree-cache/**` but NOT files directly in `.git/` — so `cl.json`, `index`, `HEAD` are all watchable
+  - `vscode.workspace.createFileSystemWatcher` with `RelativePattern(Uri.file(gitDir), filename)` correctly watches individual files inside `.git/`
+  - Trailing-edge debounce pattern: clear + set timeout ensures only one refresh fires after rapid changes settle
+---
+
+## 2026-02-19 - US-021
+- What was implemented: Unit tests for all three core modules (changelistStore, stashStore, gitUtils)
+  - 102 tests total across 3 test files
+  - `changelistStore.test.ts` (46 tests): validateChangelistName edge cases (empty, length, special chars, reserved words), sanitizeFilePath (traversal, absolute, unsafe chars), ChangelistStore CRUD (load, save, add, remove, create, delete, findChangelist), single-ownership enforcement, stash conflict checks, empty changelist omission, round-trip interop
+  - `stashStore.test.ts` (21 tests): StashStore load/save, metadata validation (type guards for StashMetadata and FileCategories), getStashedFiles aggregation, snake_case key preservation for Python interop, round-trip save/load
+  - `gitUtils.test.ts` (35 tests): All git utility functions mocked via vi.mock('child_process'), status parsing (porcelain format, renames, empty), gitAdd/Reset/Checkout/Commit arg validation, gitDiff staged flag, gitStash push/pop/drop/list, getCurrentBranch (normal + detached HEAD), branch operations
+  - Installed vitest + @vitest/coverage-v8, created vitest.config.ts
+  - Coverage: Statements 98.6%, Branches 94.57%, Functions 100%, Lines 98.55% (all well above 80% threshold)
+- Files changed:
+  - `package.json` — Updated test script to `vitest run`, added `test:coverage` script, added vitest + coverage devDependencies
+  - `vitest.config.ts` — New: vitest config with coverage thresholds for core modules
+  - `src/changelistStore.test.ts` — New: 46 unit tests for ChangelistStore, validateChangelistName, sanitizeFilePath
+  - `src/stashStore.test.ts` — New: 21 unit tests for StashStore, metadata validation
+  - `src/gitUtils.test.ts` — New: 35 unit tests for all gitUtils functions with child_process mocking
+  - `pnpm-lock.yaml` — Updated with vitest dependencies
+- **Learnings for future iterations:**
+  - vitest works out of the box with TypeScript — no separate ts-node or tsconfig-for-tests needed
+  - `vi.mock('child_process')` + `vi.mocked(execFile)` cleanly mocks the execFile callback pattern
+  - ChangelistStore/StashStore tests use real filesystem (os.tmpdir temp dirs) for load/save coverage — more reliable than mocking fs
+  - Coverage config in vitest.config.ts: use `include` array to scope coverage to specific source files (not test files)
+  - `@vitest/coverage-v8` provides v8-based coverage — fast, no Istanbul transform needed
+---
+
+## 2026-02-19 - US-022
+- What was implemented: Comprehensive error handling & user notifications
+  - Fixed silent git status failure in `openFileDiffCmd` — now shows error notification with git error message
+  - Added file-not-found warning notifications — proactively warns when files in changelists no longer exist on disk (debounced, only warns about newly missing files)
+  - Fixed unhandled promise rejections in `debouncedRefresh()` and constructor's initial `refresh()` call — errors now logged to output channel
+  - Added error logging for git status failures during background refresh — logged to output channel instead of silently swallowed
+  - Wrapped post-commit and post-revert changelist save operations in try/catch — shows warning if commit/revert succeeded but data save failed
+  - Passed `outputChannel` to `ChangelistSCMProvider` for structured error logging
+  - All acceptance criteria verified:
+    - AC1: All git command failures show error notifications ✓
+    - AC2: Invalid changelist name shows descriptive error (already implemented) ✓
+    - AC3: File-not-found warnings shown proactively ✓
+    - AC4: Stash conflicts show actionable suggestions (already implemented) ✓
+    - AC5: Network/permission errors caught gracefully ✓
+    - AC6: No unhandled promise rejections ✓
+- Files changed:
+  - `src/scmProvider.ts` — Added outputChannel parameter, lastWarnedMissingFiles tracking, missing file warnings, promise rejection handling in debouncedRefresh/constructor, git status error logging
+  - `src/extension.ts` — Passed outputChannel to SCM provider, fixed openFileDiffCmd error handling, wrapped post-commit/post-revert save operations in try/catch
+- **Learnings for future iterations:**
+  - `setTimeout(() => asyncFn(), delay)` creates unhandled promise rejections — always add `.catch()` to the promise
+  - VS Code output channels (`vscode.OutputChannel`) are good for logging background errors that shouldn't interrupt the user with notifications
+  - For file-not-found warnings, track "last warned" state to avoid spamming on every refresh cycle
+  - Post-operation save failures (e.g., commit succeeded but changelist deletion failed) deserve `showWarningMessage` not `showErrorMessage` — the primary operation succeeded
 ---

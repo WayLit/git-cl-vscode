@@ -25,7 +25,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	}
 
 	// Initialize SCM provider (changelists tree in Source Control sidebar)
-	const scmProvider = new ChangelistSCMProvider(gitRoot);
+	const scmProvider = new ChangelistSCMProvider(gitRoot, outputChannel);
 	context.subscriptions.push(scmProvider);
 
 	const statusCmd = vscode.commands.registerCommand('git-cl.showStatus', async () => {
@@ -100,7 +100,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 			let gitStatusMap: Map<string, string>;
 			try {
 				gitStatusMap = await getGitStatus(gitRoot);
-			} catch {
+			} catch (e: unknown) {
+				const msg = e instanceof Error ? e.message : String(e);
+				vscode.window.showErrorMessage(`git-cl: Failed to read git status: ${msg}`);
 				return;
 			}
 
@@ -369,8 +371,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 			scmInputBox.value = '';
 
 			// Delete the changelist after commit (default behavior)
-			store.deleteChangelist(name);
-			store.save();
+			try {
+				store.deleteChangelist(name);
+				store.save();
+			} catch (e: unknown) {
+				const saveMsg = e instanceof Error ? e.message : String(e);
+				vscode.window.showWarningMessage(`git-cl: Commit succeeded but failed to update changelist data: ${saveMsg}`);
+			}
 
 			await scmProvider.refresh();
 			vscode.window.showInformationMessage(
@@ -493,8 +500,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
 			// Delete the changelist if requested
 			if (answer === 'Revert & Delete Changelist') {
-				store.deleteChangelist(name);
-				store.save();
+				try {
+					store.deleteChangelist(name);
+					store.save();
+				} catch (e: unknown) {
+					const saveMsg = e instanceof Error ? e.message : String(e);
+					vscode.window.showWarningMessage(`git-cl: Revert succeeded but failed to update changelist data: ${saveMsg}`);
+				}
 			}
 
 			await scmProvider.refresh();
