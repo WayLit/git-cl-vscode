@@ -1,0 +1,41 @@
+{
+  "name": "git-cl-vscode",
+  "displayName": "git-cl — Changelist Manager",
+  "description": "Manage git changelists directly in VS Code. Organizes working changes into logical groups for focused commits.",
+  "version": "0.0.1",
+  "publisher": "git-cl",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "SCM Providers"
+  ],
+  "activationEvents": [
+    "workspaceContains:.git"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "git-cl.showStatus",
+        "title": "Show Changelist Status",
+        "category": "git-cl"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=es2020 --sourcemap",
+    "watch": "npm run build -- --watch",
+    "package": "npm run build -- --minify && vsce package",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit",
+    "test": "echo \"No tests yet\" && exit 0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.0"
+  }
+}
