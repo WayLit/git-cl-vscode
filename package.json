@@ -232,12 +232,15 @@
     "package": "npm run build -- --minify && vsce package",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
-    "test": "echo \"No tests yet\" && exit 0"
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.85.0",
+    "@vitest/coverage-v8": "^4.0.18",
     "esbuild": "^0.24.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.18"
   }
 }
