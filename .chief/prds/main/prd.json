@@ -58,7 +58,8 @@
         "All paths passed to git are resolved relative to git root"
       ],
       "priority": 3,
-      "passes": false
+      "passes": false,
+      "inProgress": true
     },
     {
       "id": "US-004",
