@@ -20,6 +20,15 @@
 - Diff on click uses custom `git-cl-head` URI scheme via `HeadContentProvider` (shows `git show HEAD:path`)
 - File watchers on `.git/cl.json`, `.git/cl-stashes.json`, `.git/index` + workspace file saves trigger debounced refresh (300ms)
 - `activate()` in extension.ts is async — resolves gitRoot before creating SCM provider
+- File decorations: `ChangelistDecorationProvider` in scmProvider.ts provides status badge letters + colors via `FileDecorationProvider` API
+- `statusToDecoration()` maps 2-char git status codes to `FileDecoration` (badge letter, tooltip, ThemeColor)
+- Use `vscode.window.registerFileDecorationProvider()` — fires `onDidChangeFileDecorations(undefined)` to refresh all decorations
+- Missing-file detection uses `fs.existsSync()` for files in changelists not marked as git-deleted
+- `dist/` is in `.gitignore` — don't try to `git add` build output
+- SCM context menu args: first arg = clicked resource, second arg = array of all selected (multi-select)
+- Command palette invocations get no args — detect and show file picker fallback
+- `when` clause: `scmProvider == git` for built-in Git; `scmProvider == git-cl` for ours
+- `validateChangelistName()` signature matches `showInputBox({ validateInput })` — returns `string | null`
 
 ## 2026-02-19 - US-001
 - What was implemented: Full VS Code extension scaffold with build tooling
@@ -107,4 +116,47 @@
   - Untracked files (`??` status) have no HEAD version — use `vscode.open` instead of `vscode.diff`
   - `SourceControlResourceState.decorations.faded` is useful for stashed/read-only files
   - `SourceControlResourceState.decorations.strikeThrough` marks deleted files
+---
+
+## 2026-02-19 - US-005
+- What was implemented: File status decorations for changelist tree items
+  - `ChangelistDecorationProvider` — implements `FileDecorationProvider`, provides status badge letters (M/A/D/U/R/C/!) and theme colors
+  - `statusToDecoration()` — maps 2-char git porcelain status codes to `FileDecoration` with appropriate badge and color
+  - Missing-file detection: files in changelists that no longer exist on disk get a `!` badge, strikethrough, and warning icon
+  - `createResourceState()` enhanced: checks `fs.existsSync()`, uses `ThemeIcon('warning')` for missing files
+  - Decoration provider fires `onDidChangeFileDecorations` on every SCM refresh cycle
+  - Color scheme uses VS Code standard theme colors: `gitDecoration.modifiedResourceForeground`, `.addedResourceForeground`, `.deletedResourceForeground`, `.untrackedResourceForeground`, `.conflictingResourceForeground`
+- Files changed:
+  - `src/scmProvider.ts` — Added ChangelistDecorationProvider, statusToDecoration, enhanced createResourceState
+- **Learnings for future iterations:**
+  - `FileDecorationProvider` is the standard way to add badge letters and colors to any view (Explorer, SCM, etc.)
+  - `vscode.FileDecoration(badge, tooltip, color)` — badge is 1-2 chars, color is a ThemeColor
+  - Fire `onDidChangeFileDecorations(undefined)` to refresh all URIs (simpler than tracking individual changes)
+  - `SourceControlResourceDecorations.iconPath` accepts `ThemeIcon` — useful for warning/error indicators
+  - `dist/` is gitignored — only commit source files, not build output
+  - Conflict detection: UU, AA, DD, AU, UA, DU, UD status codes all indicate merge conflicts
+---
+
+## 2026-02-19 - US-006
+- What was implemented: Add Files to Changelist command with context menu and command palette support
+  - `git-cl.addToChangelist` command registered in command palette and context menus
+  - Context menu "Add to Changelist" on built-in Git SCM files (`scmProvider == git`)
+  - Context menu "Add to Changelist" on Unassigned group files (`scmProvider == git-cl && scmResourceGroup == unassigned`)
+  - Multi-select support: extracts file paths from second arg (array of selected resources)
+  - Command palette mode: shows QuickPick with all modified/untracked files from git status for multi-select
+  - `pickChangelist()`: QuickPick with existing changelists + "Create New Changelist" option that shows InputBox
+  - InputBox validates name via `validateChangelistName()` inline
+  - Files silently moved between changelists (handled by `ChangelistStore.addFiles()`)
+  - Tree view refreshes immediately after adding via `scmProvider.refresh()`
+  - Added `getGitRoot()` getter to `ChangelistSCMProvider`
+- Files changed:
+  - `package.json` — Added `git-cl.addToChangelist` command + `scm/resourceState/context` menu contributions
+  - `src/extension.ts` — Command handler, `resolveFilePaths()`, `pickChangelist()` helper functions
+  - `src/scmProvider.ts` — Added `getGitRoot()` public getter
+- **Learnings for future iterations:**
+  - SCM context menu args: first arg = clicked resource, second arg = array of all selected resources (multi-select)
+  - `scm/resourceState/context` menu needs separate entries for each `scmProvider` (git vs git-cl)
+  - `when` clause for built-in Git SCM: `scmProvider == git`; for our SCM: `scmProvider == git-cl`
+  - `validateChangelistName()` returns `string | null` — compatible with `showInputBox({ validateInput })` API
+  - For command palette invocations (no args), show file picker from `getGitStatus()` with `canPickMany: true`
 ---

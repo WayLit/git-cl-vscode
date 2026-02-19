@@ -21,8 +21,27 @@
         "command": "git-cl.showStatus",
         "title": "Show Changelist Status",
         "category": "git-cl"
+      },
+      {
+        "command": "git-cl.addToChangelist",
+        "title": "Add to Changelist",
+        "category": "git-cl"
       }
-    ]
+    ],
+    "menus": {
+      "scm/resourceState/context": [
+        {
+          "command": "git-cl.addToChangelist",
+          "when": "scmProvider == git",
+          "group": "1_modification"
+        },
+        {
+          "command": "git-cl.addToChangelist",
+          "when": "scmProvider == git-cl && scmResourceGroup == unassigned",
+          "group": "1_modification"
+        }
+      ]
+    }
   },
   "scripts": {
     "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=es2020 --sourcemap",

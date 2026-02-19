@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
-import { getGitRoot } from './gitUtils';
+import * as path from 'path';
+import { getGitRoot, getGitStatus } from './gitUtils';
 import { ChangelistSCMProvider } from './scmProvider';
+import { validateChangelistName } from './changelistStore';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
 	const outputChannel = vscode.window.createOutputChannel('git-cl');
@@ -30,8 +32,139 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		outputChannel.show();
 	});
 
-	context.subscriptions.push(statusCmd);
+	const addToChangelistCmd = vscode.commands.registerCommand(
+		'git-cl.addToChangelist',
+		async (...args: unknown[]) => {
+			const filePaths = await resolveFilePaths(gitRoot, args);
+			if (!filePaths || filePaths.length === 0) {
+				return;
+			}
+
+			const changelistName = await pickChangelist(scmProvider);
+			if (!changelistName) {
+				return;
+			}
+
+			try {
+				const store = scmProvider.getChangelistStore();
+				store.addFiles(changelistName, filePaths, scmProvider.getStashStore());
+				store.save();
+			} catch (e: unknown) {
+				const msg = e instanceof Error ? e.message : String(e);
+				vscode.window.showErrorMessage(`git-cl: ${msg}`);
+				return;
+			}
+
+			await scmProvider.refresh();
+		}
+	);
+
+	context.subscriptions.push(statusCmd, addToChangelistCmd);
 	outputChannel.appendLine('git-cl extension activated.');
+}
+
+/**
+ * Resolve file paths from command arguments (context menu) or prompt the user
+ * to select files from git status (command palette).
+ */
+async function resolveFilePaths(
+	gitRoot: string,
+	args: unknown[]
+): Promise<string[] | undefined> {
+	// Context menu with multi-select: second arg is the array of selected resources
+	if (args.length >= 2 && Array.isArray(args[1])) {
+		const resources = args[1] as vscode.SourceControlResourceState[];
+		return resources.map(r =>
+			path.relative(gitRoot, r.resourceUri.fsPath).split(path.sep).join('/')
+		);
+	}
+
+	// Context menu single-select: first arg is the clicked resource
+	if (
+		args.length >= 1 &&
+		args[0] &&
+		typeof args[0] === 'object' &&
+		'resourceUri' in (args[0] as Record<string, unknown>)
+	) {
+		const resource = args[0] as vscode.SourceControlResourceState;
+		return [
+			path.relative(gitRoot, resource.resourceUri.fsPath)
+				.split(path.sep)
+				.join('/'),
+		];
+	}
+
+	// Command palette — show file picker from git status
+	let gitStatus: Map<string, string>;
+	try {
+		gitStatus = await getGitStatus(gitRoot);
+	} catch {
+		vscode.window.showErrorMessage('git-cl: Failed to read git status.');
+		return undefined;
+	}
+
+	if (gitStatus.size === 0) {
+		vscode.window.showInformationMessage('git-cl: No changed files to add.');
+		return undefined;
+	}
+
+	const items: vscode.QuickPickItem[] = [];
+	for (const [filePath, status] of gitStatus) {
+		items.push({
+			label: filePath,
+			description: status.trim(),
+		});
+	}
+
+	const picked = await vscode.window.showQuickPick(items, {
+		canPickMany: true,
+		placeHolder: 'Select files to add to a changelist',
+	});
+
+	if (!picked || picked.length === 0) {
+		return undefined;
+	}
+
+	return picked.map(item => item.label);
+}
+
+/**
+ * Show a QuickPick to select an existing changelist or create a new one.
+ */
+async function pickChangelist(
+	scmProvider: ChangelistSCMProvider
+): Promise<string | undefined> {
+	const store = scmProvider.getChangelistStore();
+	store.load();
+	const existingNames = store.getNames();
+
+	const createNewLabel = '$(plus) Create New Changelist';
+	const items: vscode.QuickPickItem[] = [
+		{ label: createNewLabel, description: 'Enter a new changelist name' },
+		...existingNames.map(name => ({
+			label: name,
+			description: `${store.getFiles(name).length} file(s)`,
+		})),
+	];
+
+	const picked = await vscode.window.showQuickPick(items, {
+		placeHolder: 'Select or create a changelist',
+	});
+
+	if (!picked) {
+		return undefined;
+	}
+
+	if (picked.label === createNewLabel) {
+		const name = await vscode.window.showInputBox({
+			prompt: 'Enter changelist name',
+			placeHolder: 'my-feature',
+			validateInput: value => validateChangelistName(value),
+		});
+		return name ?? undefined;
+	}
+
+	return picked.label;
 }
 
 export function deactivate(): void {

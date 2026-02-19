@@ -370,6 +370,10 @@ export class ChangelistSCMProvider implements vscode.Disposable {
 		return this.stashStore;
 	}
 
+	getGitRoot(): string {
+		return this.gitRoot;
+	}
+
 	getSourceControl(): vscode.SourceControl {
 		return this.scm;
 	}
