@@ -1,0 +1,52 @@
+## Codebase Patterns
+- Use `pnpm` as package manager (npm is broken on this system)
+- Build with esbuild: `pnpm run build` bundles src/extension.ts → dist/extension.js
+- Typecheck with: `pnpm run typecheck` (tsc --noEmit)
+- Extension entry point: `src/extension.ts` with `activate()` and `deactivate()` exports
+- VS Code extension manifest in `package.json` under `contributes`
+- esbuild requires build approval in `.npmrc`: `onlyBuiltDependencies[]=esbuild`
+- Sandbox restrictions block `.git` writes — use `dangerouslyDisableSandbox: true` for git commands
+- Project root is `/home/satya/oss/git-cl-vscode/`, working directory is `.chief/prds/main`
+- Data model: `ChangelistStore` (src/changelistStore.ts) for cl.json, `StashStore` (src/stashStore.ts) for cl-stashes.json
+- cl.json format: `Record<string, string[]>` — changelist name → relative file paths (forward slashes)
+- cl-stashes.json format: `Record<string, StashMetadata>` — uses snake_case keys for Python interop
+- Use `validateChangelistName()` and `sanitizeFilePath()` from changelistStore.ts for input validation
+
+## 2026-02-19 - US-001
+- What was implemented: Full VS Code extension scaffold with build tooling
+- Files changed:
+  - `package.json` — Extension manifest with contributes, activationEvents, engines, scripts
+  - `tsconfig.json` — TypeScript config targeting ES2020 with strict mode
+  - `src/extension.ts` — Extension entry point with activate/deactivate
+  - `.vscode/launch.json` — F5 Extension Development Host launch config
+  - `.vscode/tasks.json` — Default build task for esbuild
+  - `.gitignore` — Ignores node_modules, dist, .vsix, .venv
+  - `.vscodeignore` — Excludes source/dev files from packaged extension
+  - `.npmrc` — pnpm build approval config for esbuild
+  - `pnpm-lock.yaml` — Lock file
+- **Learnings for future iterations:**
+  - npm is broken on this system; use `pnpm` for all package management
+  - pnpm 10.x requires explicit approval for package build scripts via `.npmrc`
+  - git init and git commands need `dangerouslyDisableSandbox: true` due to sandbox restrictions on `.git/`
+  - The project CWD is `.chief/prds/main` but source code goes in `/home/satya/oss/git-cl-vscode/`
+  - esbuild is configured inline in `package.json` scripts (no separate config file needed)
+---
+
+## 2026-02-19 - US-002
+- What was implemented: Core data model for changelist storage
+  - `ChangelistStore` class — loads/saves `.git/cl.json`, enforces single-ownership of files across changelists
+  - `StashStore` class — loads/saves `.git/cl-stashes.json` with full stash metadata
+  - `validateChangelistName()` — alphanumeric + hyphens/underscores/dots, max 100 chars, rejects git reserved words
+  - `sanitizeFilePath()` — validates relative paths, rejects traversal/absolute/unsafe chars
+  - Stash conflict check: files in stashed changelists cannot be added to active changelists
+  - Empty changelists omitted on save (matches Python git-cl behavior)
+- Files changed:
+  - `src/changelistStore.ts` — ChangelistStore class, name validation, path sanitization
+  - `src/stashStore.ts` — StashStore class, stash metadata types, type guards
+- **Learnings for future iterations:**
+  - Data format uses snake_case keys (e.g., `stash_ref`, `source_branch`, `file_categories`) to match Python git-cl interop
+  - `cl.json` is a simple `Record<string, string[]>` — changelist name → relative file paths
+  - `cl-stashes.json` maps changelist name → `StashMetadata` with `stash_ref`, `stash_message`, `files`, `timestamp`, `source_branch`, `file_categories`
+  - File paths in cl.json use forward slashes (git convention) regardless of OS
+  - Build (`pnpm run build`) needs `dangerouslyDisableSandbox: true` due to write to `dist/`
+---
