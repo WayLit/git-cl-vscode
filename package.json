@@ -26,6 +26,11 @@
         "command": "git-cl.addToChangelist",
         "title": "Add to Changelist",
         "category": "git-cl"
+      },
+      {
+        "command": "git-cl.removeFromChangelist",
+        "title": "Remove from Changelist",
+        "category": "git-cl"
       }
     ],
     "menus": {
@@ -38,6 +43,11 @@
         {
           "command": "git-cl.addToChangelist",
           "when": "scmProvider == git-cl && scmResourceGroup == unassigned",
+          "group": "1_modification"
+        },
+        {
+          "command": "git-cl.removeFromChangelist",
+          "when": "scmProvider == git-cl && scmResourceGroup =~ /^cl:/",
           "group": "1_modification"
         }
       ]

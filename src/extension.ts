@@ -59,7 +59,34 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		}
 	);
 
-	context.subscriptions.push(statusCmd, addToChangelistCmd);
+	const removeFromChangelistCmd = vscode.commands.registerCommand(
+		'git-cl.removeFromChangelist',
+		async (...args: unknown[]) => {
+			const filePaths = await resolveFilePathsFromChangelists(gitRoot, scmProvider, args);
+			if (!filePaths || filePaths.length === 0) {
+				return;
+			}
+
+			try {
+				const store = scmProvider.getChangelistStore();
+				for (const filePath of filePaths) {
+					const clName = store.findChangelist(filePath);
+					if (clName) {
+						store.removeFiles(clName, [filePath]);
+					}
+				}
+				store.save();
+			} catch (e: unknown) {
+				const msg = e instanceof Error ? e.message : String(e);
+				vscode.window.showErrorMessage(`git-cl: ${msg}`);
+				return;
+			}
+
+			await scmProvider.refresh();
+		}
+	);
+
+	context.subscriptions.push(statusCmd, addToChangelistCmd, removeFromChangelistCmd);
 	outputChannel.appendLine('git-cl extension activated.');
 }
 
@@ -119,6 +146,70 @@ async function resolveFilePaths(
 	const picked = await vscode.window.showQuickPick(items, {
 		canPickMany: true,
 		placeHolder: 'Select files to add to a changelist',
+	});
+
+	if (!picked || picked.length === 0) {
+		return undefined;
+	}
+
+	return picked.map(item => item.label);
+}
+
+/**
+ * Resolve file paths for removal: from context menu args or prompt the user
+ * to pick files from existing changelists (command palette).
+ */
+async function resolveFilePathsFromChangelists(
+	gitRoot: string,
+	scmProvider: ChangelistSCMProvider,
+	args: unknown[]
+): Promise<string[] | undefined> {
+	// Context menu with multi-select: second arg is the array of selected resources
+	if (args.length >= 2 && Array.isArray(args[1])) {
+		const resources = args[1] as vscode.SourceControlResourceState[];
+		return resources.map(r =>
+			path.relative(gitRoot, r.resourceUri.fsPath).split(path.sep).join('/')
+		);
+	}
+
+	// Context menu single-select: first arg is the clicked resource
+	if (
+		args.length >= 1 &&
+		args[0] &&
+		typeof args[0] === 'object' &&
+		'resourceUri' in (args[0] as Record<string, unknown>)
+	) {
+		const resource = args[0] as vscode.SourceControlResourceState;
+		return [
+			path.relative(gitRoot, resource.resourceUri.fsPath)
+				.split(path.sep)
+				.join('/'),
+		];
+	}
+
+	// Command palette — show file picker from all changelists
+	const store = scmProvider.getChangelistStore();
+	store.load();
+	const changelists = store.getAll();
+
+	const items: vscode.QuickPickItem[] = [];
+	for (const [name, files] of Object.entries(changelists)) {
+		for (const filePath of files) {
+			items.push({
+				label: filePath,
+				description: name,
+			});
+		}
+	}
+
+	if (items.length === 0) {
+		vscode.window.showInformationMessage('git-cl: No files in any changelist to remove.');
+		return undefined;
+	}
+
+	const picked = await vscode.window.showQuickPick(items, {
+		canPickMany: true,
+		placeHolder: 'Select files to remove from their changelist',
 	});
 
 	if (!picked || picked.length === 0) {
