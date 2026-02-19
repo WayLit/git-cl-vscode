@@ -37,6 +37,8 @@
 - Stash group IDs: `stash:<name>` prefix; use `resolveStashName()` to extract name
 - Must remove from stash store BEFORE adding files to changelist store during unstash (avoids stash conflict check)
 - Find stash ref by message via `findStashRefByMessage()` — stash indices shift, message is stable
+- Branch existence check: `gitBranchExists()` uses `git rev-parse --verify refs/heads/<name>`
+- `gitCheckoutExistingBranch()` switches to an existing branch (vs `gitCheckoutBranch()` which creates new)
 
 ## 2026-02-19 - US-001
 - What was implemented: Full VS Code extension scaffold with build tooling
@@ -382,4 +384,41 @@
   - `findStashRefByMessage()` searches `gitStashList()` by message match, since stash indices shift when stashes are created/dropped
   - `gitStashList()` returns entries with `message` that includes the full stash line after first colon — use `includes()` for matching
   - Force mode (`--force` equivalent) skips branch and conflict validation entirely
+---
+
+## 2026-02-19 - US-017
+- What was implemented: Branch from Changelist command
+  - `git-cl.branchFromChangelist` command — creates a new branch with a changelist's changes isolated
+  - Context menu "Branch from Changelist" on changelist group headers (group `5_branch@1`)
+  - Command palette flow: QuickPick to select changelist, then prompts for branch name and base branch
+  - Branch name defaults to changelist name; base branch defaults to current branch
+  - Validates: changelist is non-empty, branch doesn't already exist, no unassigned uncommitted changes
+  - Workflow: stashes all active changelists → creates branch → unstashes target changelist only
+  - Full rollback on failure: unstashes all changelists and returns to original branch
+  - Added `gitBranchExists()` and `gitCheckoutExistingBranch()` to gitUtils.ts
+- Files changed:
+  - `package.json` — Added `git-cl.branchFromChangelist` command + `scm/resourceGroup/context` menu entry
+  - `src/extension.ts` — Branch command handler, imported new git utilities
+  - `src/gitUtils.ts` — Added `gitBranchExists()` and `gitCheckoutExistingBranch()` functions
+- **Learnings for future iterations:**
+  - `git rev-parse --verify refs/heads/<name>` is the reliable way to check if a local branch exists
+  - Branch name validation: reject `\s~^:?*[\` characters (git ref format rules)
+  - Reuse existing `stashSingleChangelist()` and `unstashSingleChangelist()` for the stash-all/unstash-target workflow
+  - Force mode (`true`) on unstash skips branch/conflict validation — needed during branch creation since we're on a new branch
+  - Menu group `5_branch@1` keeps branch action separate from stash (`4_branch`), revert (`3_revert`), diff (`2_diff`), and modification (`1_modification`) groups
+  - `$(git-branch)` codicon icon is appropriate for branch-related commands
+---
+
+## 2026-02-19 - US-018
+- What was implemented: Context menus in built-in Changes section — already fully implemented in US-006
+  - `scm/resourceState/context` menu entry with `when: "scmProvider == git"` (package.json line 190-193)
+  - Multi-select support via `resolveFilePaths()` handling second arg as array of SourceControlResourceState
+  - QuickPick to choose or create changelist via `pickChangelist()`
+  - Path resolution from built-in Git SCM resource URIs via `path.relative(gitRoot, r.resourceUri.fsPath)`
+  - Visibility controlled by `scmProvider == git` when clause (only present in git repos)
+- Files changed: None (all criteria were already met from US-006)
+- **Learnings for future iterations:**
+  - US-018 was fully covered by US-006 implementation — the built-in Git SCM integration was done alongside the general "Add to Changelist" command
+  - The built-in Git extension's `resourceUri` is always a `file://` URI, so `fsPath` gives the correct absolute path
+  - `scmProvider == git` when clause automatically limits menu visibility to git repositories
 ---

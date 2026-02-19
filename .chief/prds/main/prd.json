@@ -290,7 +290,8 @@
         "Tree view refreshes after branch switch"
       ],
       "priority": 17,
-      "passes": false
+      "passes": true,
+      "inProgress": false
     },
     {
       "id": "US-018",
@@ -304,7 +305,8 @@
         "Menu item only visible when in a git repository"
       ],
       "priority": 18,
-      "passes": false
+      "passes": true,
+      "inProgress": false
     },
     {
       "id": "US-019",
