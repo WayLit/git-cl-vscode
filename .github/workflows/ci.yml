@@ -45,6 +45,9 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Set version from git tag
+        run: npm version "${GITHUB_REF#refs/tags/v}" --no-git-tag-version
+
       - run: pnpm -- build --minify
 
       - run: pnpm vsce publish
