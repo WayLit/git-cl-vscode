@@ -37,7 +37,7 @@ class HeadContentProvider implements vscode.TextDocumentContentProvider {
 
 /**
  * Provides file decorations (status badge + color) for files shown in the
- * changelist SCM tree. Decorations update whenever the SCM view refreshes.
+ * changelist tree. Decorations update whenever the tree view refreshes.
  */
 class ChangelistDecorationProvider implements vscode.FileDecorationProvider {
 	private readonly _onDidChangeFileDecorations = new vscode.EventEmitter<vscode.Uri | vscode.Uri[] | undefined>();
@@ -134,28 +134,42 @@ function statusToDecoration(status: string): vscode.FileDecoration | undefined {
 	return undefined;
 }
 
+function formatStashLabel(name: string, meta: StashMetadata): string {
+	const date = new Date(meta.timestamp).toLocaleDateString();
+	return `${name} (stashed from ${meta.source_branch}, ${date})`;
+}
+
+export type TreeNode =
+	| { type: 'changelist'; name: string }
+	| { type: 'changelistFile'; filePath: string; changelistName: string }
+	| { type: 'unassignedSection' }
+	| { type: 'unassignedFile'; filePath: string }
+	| { type: 'stashedChangelist'; name: string; metadata: StashMetadata }
+	| { type: 'stashedFile'; filePath: string; stashName: string };
+
 /**
- * SCM provider that surfaces changelists in the Source Control sidebar.
+ * TreeDataProvider that surfaces changelists in a TreeView within the
+ * Source Control sidebar.
  *
- * Groups are ordered: [active changelists] → Unassigned → [stashed changelists].
- * The group set is rebuilt when changelists are added/removed; resource states
- * within groups are updated on every refresh.
+ * Tree structure: [active changelists] → Unassigned → [stashed changelists].
  */
-export class ChangelistSCMProvider implements vscode.Disposable {
-	private readonly scm: vscode.SourceControl;
+export class ChangelistTreeDataProvider implements vscode.TreeDataProvider<TreeNode>, vscode.Disposable {
+	private readonly _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined | void>();
+	readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+
 	private readonly changelistStore: ChangelistStore;
 	private readonly stashStore: StashStore;
 	private readonly decorationProvider: ChangelistDecorationProvider;
 	private readonly disposables: vscode.Disposable[] = [];
 
-	private changelistGroups = new Map<string, vscode.SourceControlResourceGroup>();
-	private unassignedGroup: vscode.SourceControlResourceGroup | undefined;
-	private stashedGroups = new Map<string, vscode.SourceControlResourceGroup>();
-
 	private refreshTimeout: ReturnType<typeof setTimeout> | undefined;
-	private lastActiveKeys = '';
-	private lastStashedKeys = '';
 	private lastWarnedMissingFiles = new Set<string>();
+
+	// Cached data from last refresh
+	private cachedChangelists: Record<string, string[]> = {};
+	private cachedStashData: Record<string, StashMetadata> = {};
+	private cachedGitStatus: GitStatusMap = new Map();
+	private cachedUnassigned: string[] = [];
 
 	constructor(private readonly gitRoot: string, private readonly outputChannel?: vscode.OutputChannel) {
 		this.changelistStore = new ChangelistStore(gitRoot);
@@ -175,11 +189,6 @@ export class ChangelistSCMProvider implements vscode.Disposable {
 			vscode.window.registerFileDecorationProvider(this.decorationProvider),
 			this.decorationProvider
 		);
-
-		// Create SCM provider
-		this.scm = vscode.scm.createSourceControl('git-cl', 'Changelists', vscode.Uri.file(gitRoot));
-		this.scm.inputBox.placeholder = 'Commit message';
-		this.disposables.push(this.scm);
 
 		this.setupWatchers();
 		this.refresh().catch(err => {
@@ -234,67 +243,27 @@ export class ChangelistSCMProvider implements vscode.Disposable {
 			gitStatus = new Map();
 		}
 
-		const changelists = this.changelistStore.getAll();
-		const stashData = this.stashStore.getAll();
+		this.cachedChangelists = this.changelistStore.getAll();
+		this.cachedStashData = this.stashStore.getAll();
+		this.cachedGitStatus = gitStatus;
 
-		const activeNames = Object.keys(changelists);
-		const stashedNames = Object.keys(stashData);
-		const activeKey = activeNames.join('\0');
-		const stashedKey = stashedNames.join('\0');
-
-		// Rebuild all groups when the set of changelists changes (to preserve ordering)
-		if (activeKey !== this.lastActiveKeys || stashedKey !== this.lastStashedKeys) {
-			this.disposeAllGroups();
-
-			// 1. Active changelist groups
-			for (const name of activeNames) {
-				const group = this.scm.createResourceGroup(`cl:${name}`, name);
-				this.changelistGroups.set(name, group);
-			}
-
-			// 2. Unassigned group
-			this.unassignedGroup = this.scm.createResourceGroup('unassigned', 'Unassigned');
-			this.unassignedGroup.hideWhenEmpty = true;
-
-			// 3. Stashed groups
-			for (const name of stashedNames) {
-				const meta = stashData[name];
-				const group = this.scm.createResourceGroup(
-					`stash:${name}`,
-					formatStashLabel(name, meta)
-				);
-				this.stashedGroups.set(name, group);
-			}
-
-			this.lastActiveKeys = activeKey;
-			this.lastStashedKeys = stashedKey;
-		}
-
-		// Update active changelist resource states
+		// Compute unassigned files
 		const assignedFiles = new Set<string>();
 		const allDisplayedFiles = new Set<string>();
-		for (const [name, files] of Object.entries(changelists)) {
-			const group = this.changelistGroups.get(name);
-			if (group) {
-				group.resourceStates = files.map(filePath => {
-					assignedFiles.add(filePath);
-					allDisplayedFiles.add(filePath);
-					return this.createResourceState(filePath, gitStatus);
-				});
+		for (const files of Object.values(this.cachedChangelists)) {
+			for (const f of files) {
+				assignedFiles.add(f);
+				allDisplayedFiles.add(f);
 			}
 		}
 
-		// Update unassigned group — git-tracked files not in any changelist
-		if (this.unassignedGroup) {
-			const stashedFiles = this.stashStore.getStashedFiles();
-			const unassigned: vscode.SourceControlResourceState[] = [];
-			for (const [filePath] of gitStatus) {
-				if (!assignedFiles.has(filePath) && !stashedFiles.has(filePath)) {
-					allDisplayedFiles.add(filePath);
-					unassigned.push(this.createResourceState(filePath, gitStatus));
-				}
+		const stashedFiles = this.stashStore.getStashedFiles();
+		this.cachedUnassigned = [];
+		for (const [filePath] of gitStatus) {
+			if (!assignedFiles.has(filePath) && !stashedFiles.has(filePath)) {
+				this.cachedUnassigned.push(filePath);
+				allDisplayedFiles.add(filePath);
 			}
-			this.unassignedGroup.resourceStates = unassigned;
 		}
 
 		// Update decoration provider with current status for all displayed files
@@ -302,7 +271,7 @@ export class ChangelistSCMProvider implements vscode.Disposable {
 
 		// Check for files in changelists that no longer exist on disk
 		const currentMissingFiles = new Set<string>();
-		for (const files of Object.values(changelists)) {
+		for (const files of Object.values(this.cachedChangelists)) {
 			for (const filePath of files) {
 				const status = gitStatus.get(filePath);
 				const isGitDeleted = status !== undefined &&
@@ -324,77 +293,165 @@ export class ChangelistSCMProvider implements vscode.Disposable {
 		}
 		this.lastWarnedMissingFiles = currentMissingFiles;
 
-		// Update stashed group resource states and labels
-		for (const [name, meta] of Object.entries(stashData)) {
-			const group = this.stashedGroups.get(name);
-			if (group) {
-				group.label = formatStashLabel(name, meta);
-				group.resourceStates = meta.files.map(filePath => ({
-					resourceUri: vscode.Uri.file(path.join(this.gitRoot, filePath)),
-					decorations: {
-						tooltip: `${filePath} (stashed)`,
-						faded: true
-					}
-				}));
+		this._onDidChangeTreeData.fire(undefined);
+	}
+
+	getTreeItem(element: TreeNode): vscode.TreeItem {
+		switch (element.type) {
+			case 'changelist': {
+				const files = this.cachedChangelists[element.name] ?? [];
+				const item = new vscode.TreeItem(
+					element.name,
+					vscode.TreeItemCollapsibleState.Expanded
+				);
+				item.id = `cl:${element.name}`;
+				item.contextValue = 'changelist';
+				item.iconPath = new vscode.ThemeIcon('list-unordered');
+				item.description = `${files.length} file(s)`;
+				return item;
+			}
+
+			case 'changelistFile': {
+				const uri = vscode.Uri.file(path.join(this.gitRoot, element.filePath));
+				const item = new vscode.TreeItem(uri);
+				item.id = `cl:${element.changelistName}:${element.filePath}`;
+				item.contextValue = 'changelistFile';
+				item.command = this.createFileCommand(element.filePath, uri);
+				item.resourceUri = uri;
+				this.applyFileDecorations(item, element.filePath, uri);
+				return item;
+			}
+
+			case 'unassignedSection': {
+				const item = new vscode.TreeItem(
+					'Unassigned',
+					vscode.TreeItemCollapsibleState.Collapsed
+				);
+				item.id = 'unassigned';
+				item.contextValue = 'unassignedSection';
+				item.description = `${this.cachedUnassigned.length} file(s)`;
+				return item;
+			}
+
+			case 'unassignedFile': {
+				const uri = vscode.Uri.file(path.join(this.gitRoot, element.filePath));
+				const item = new vscode.TreeItem(uri);
+				item.id = `unassigned:${element.filePath}`;
+				item.contextValue = 'unassignedFile';
+				item.command = this.createFileCommand(element.filePath, uri);
+				item.resourceUri = uri;
+				this.applyFileDecorations(item, element.filePath, uri);
+				return item;
+			}
+
+			case 'stashedChangelist': {
+				const item = new vscode.TreeItem(
+					formatStashLabel(element.name, element.metadata),
+					vscode.TreeItemCollapsibleState.Collapsed
+				);
+				item.id = `stash:${element.name}`;
+				item.contextValue = 'stashedChangelist';
+				item.iconPath = new vscode.ThemeIcon('archive');
+				return item;
+			}
+
+			case 'stashedFile': {
+				const uri = vscode.Uri.file(path.join(this.gitRoot, element.filePath));
+				const item = new vscode.TreeItem(uri);
+				item.id = `stash:${element.stashName}:${element.filePath}`;
+				item.contextValue = 'stashedFile';
+				item.description = '(stashed)';
+				item.resourceUri = uri;
+				return item;
 			}
 		}
 	}
 
-	private createResourceState(
-		filePath: string,
-		gitStatus: GitStatusMap
-	): vscode.SourceControlResourceState {
-		const uri = vscode.Uri.file(path.join(this.gitRoot, filePath));
-		const status = gitStatus.get(filePath) ?? '  ';
+	getChildren(element?: TreeNode): TreeNode[] {
+		if (!element) {
+			// Root level
+			const nodes: TreeNode[] = [];
+
+			// Active changelists
+			for (const name of Object.keys(this.cachedChangelists)) {
+				nodes.push({ type: 'changelist', name });
+			}
+
+			// Unassigned section (only if there are unassigned files)
+			if (this.cachedUnassigned.length > 0) {
+				nodes.push({ type: 'unassignedSection' });
+			}
+
+			// Stashed changelists
+			for (const [name, metadata] of Object.entries(this.cachedStashData)) {
+				nodes.push({ type: 'stashedChangelist', name, metadata });
+			}
+
+			return nodes;
+		}
+
+		switch (element.type) {
+			case 'changelist': {
+				const files = this.cachedChangelists[element.name] ?? [];
+				return files.map(filePath => ({
+					type: 'changelistFile' as const,
+					filePath,
+					changelistName: element.name,
+				}));
+			}
+
+			case 'unassignedSection': {
+				return this.cachedUnassigned.map(filePath => ({
+					type: 'unassignedFile' as const,
+					filePath,
+				}));
+			}
+
+			case 'stashedChangelist': {
+				return element.metadata.files.map(filePath => ({
+					type: 'stashedFile' as const,
+					filePath,
+					stashName: element.name,
+				}));
+			}
+
+			default:
+				return [];
+		}
+	}
+
+	private createFileCommand(filePath: string, uri: vscode.Uri): vscode.Command {
+		const status = this.cachedGitStatus.get(filePath) ?? '  ';
 		const isDeleted = status[1] === 'D' || (status[0] === 'D' && status[1] === ' ');
 		const isUntracked = status === '??';
 		const isMissing = !isDeleted && !fs.existsSync(uri.fsPath);
 
-		// Untracked or missing files have no HEAD version — just open the file
-		const command: vscode.Command = (isUntracked || isMissing)
-			? { title: 'Open File', command: 'vscode.open', arguments: [uri] }
-			: {
-				title: 'Open Diff',
-				command: 'vscode.diff',
-				arguments: [
-					vscode.Uri.from({ scheme: HEAD_SCHEME, path: `/${filePath}` }),
-					uri,
-					`${path.basename(filePath)} (Working Tree)`
-				]
-			};
-
-		const tooltip = isMissing
-			? `${filePath} [missing from disk]`
-			: `${filePath} [${status.trim() || 'clean'}]`;
+		if (isUntracked || isMissing) {
+			return { title: 'Open File', command: 'vscode.open', arguments: [uri] };
+		}
 
 		return {
-			resourceUri: uri,
-			command,
-			decorations: {
-				strikeThrough: isDeleted || isMissing,
-				tooltip,
-				iconPath: isMissing
-					? new vscode.ThemeIcon('warning', new vscode.ThemeColor('problemsWarningIcon.foreground'))
-					: undefined
-			}
+			title: 'Open Diff',
+			command: 'vscode.diff',
+			arguments: [
+				vscode.Uri.from({ scheme: HEAD_SCHEME, path: `/${filePath}` }),
+				uri,
+				`${path.basename(filePath)} (Working Tree)`,
+			],
 		};
 	}
 
-	private disposeAllGroups(): void {
-		for (const [, group] of this.changelistGroups) {
-			group.dispose();
-		}
-		this.changelistGroups.clear();
+	private applyFileDecorations(item: vscode.TreeItem, filePath: string, uri: vscode.Uri): void {
+		const status = this.cachedGitStatus.get(filePath) ?? '  ';
+		const isDeleted = status[1] === 'D' || (status[0] === 'D' && status[1] === ' ');
+		const isMissing = !isDeleted && !fs.existsSync(uri.fsPath);
 
-		if (this.unassignedGroup) {
-			this.unassignedGroup.dispose();
-			this.unassignedGroup = undefined;
+		if (isMissing) {
+			item.tooltip = `${filePath} [missing from disk]`;
+			item.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('problemsWarningIcon.foreground'));
+		} else {
+			item.tooltip = `${filePath} [${status.trim() || 'clean'}]`;
 		}
-
-		for (const [, group] of this.stashedGroups) {
-			group.dispose();
-		}
-		this.stashedGroups.clear();
 	}
 
 	getChangelistStore(): ChangelistStore {
@@ -409,22 +466,12 @@ export class ChangelistSCMProvider implements vscode.Disposable {
 		return this.gitRoot;
 	}
 
-	getSourceControl(): vscode.SourceControl {
-		return this.scm;
-	}
-
 	dispose(): void {
 		if (this.refreshTimeout) {
 			clearTimeout(this.refreshTimeout);
 		}
-		this.disposeAllGroups();
 		for (const d of this.disposables) {
 			d.dispose();
 		}
 	}
-}
-
-function formatStashLabel(name: string, meta: StashMetadata): string {
-	const date = new Date(meta.timestamp).toLocaleDateString();
-	return `${name} (stashed from ${meta.source_branch}, ${date})`;
 }

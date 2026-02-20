@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { getGitRoot, getGitStatus, gitAdd, gitReset, gitCommit, gitCheckout, gitStashPush, gitStashDrop, gitStashPop, gitStashList, getCurrentBranch, gitCheckoutBranch, gitBranchExists, gitCheckoutExistingBranch } from './gitUtils';
-import { ChangelistSCMProvider } from './scmProvider';
+import { ChangelistTreeDataProvider, TreeNode } from './changelistTreeProvider';
 import { validateChangelistName } from './changelistStore';
 import { FileCategories, StashMetadata } from './stashStore';
 
@@ -24,9 +24,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		return;
 	}
 
-	// Initialize SCM provider (changelists tree in Source Control sidebar)
-	const scmProvider = new ChangelistSCMProvider(gitRoot, outputChannel);
-	context.subscriptions.push(scmProvider);
+	// Initialize TreeView provider (changelists section in Source Control sidebar)
+	vscode.commands.executeCommand('setContext', 'git-cl:hasGitRoot', true);
+	const scmProvider = new ChangelistTreeDataProvider(gitRoot, outputChannel);
+	const treeView = vscode.window.createTreeView('git-cl.changelists', {
+		treeDataProvider: scmProvider,
+		showCollapseAll: true,
+		canSelectMany: true,
+	});
+	context.subscriptions.push(scmProvider, treeView);
 
 	const statusCmd = vscode.commands.registerCommand('git-cl.showStatus', async () => {
 		await showFormattedStatus(outputChannel, scmProvider, gitRoot);
@@ -89,13 +95,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	const openFileDiffCmd = vscode.commands.registerCommand(
 		'git-cl.openFileDiff',
 		async (...args: unknown[]) => {
-			const resource = args[0] as vscode.SourceControlResourceState | undefined;
-			if (!resource?.resourceUri) {
+			const filePath = resolveFilePathFromArg(gitRoot, args[0]);
+			if (!filePath) {
 				return;
 			}
-
-			const filePath = path.relative(gitRoot, resource.resourceUri.fsPath)
-				.split(path.sep).join('/');
 
 			let gitStatusMap: Map<string, string>;
 			try {
@@ -107,7 +110,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 			}
 
 			const status = gitStatusMap.get(filePath);
-			const fileUri = resource.resourceUri;
+			const fileUri = vscode.Uri.file(path.join(gitRoot, filePath));
 			const isUntracked = status === '??';
 			const isDeleted = status !== undefined &&
 				(status[1] === 'D' || (status[0] === 'D' && status[1] === ' '));
@@ -137,7 +140,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	const deleteChangelistCmd = vscode.commands.registerCommand(
 		'git-cl.deleteChangelist',
 		async (...args: unknown[]) => {
-			const changelistName = resolveChangelistName(scmProvider, args);
+			const changelistName = resolveChangelistName(args);
 
 			if (changelistName) {
 				// Invoked from context menu — we have the changelist name
@@ -198,7 +201,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	const stageChangelistCmd = vscode.commands.registerCommand(
 		'git-cl.stageChangelist',
 		async (...args: unknown[]) => {
-			const changelistName = resolveChangelistName(scmProvider, args);
+			const changelistName = resolveChangelistName(args);
 			const name = changelistName ?? await pickChangelistForAction(scmProvider, 'stage');
 			if (!name) {
 				return;
@@ -248,7 +251,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	const unstageChangelistCmd = vscode.commands.registerCommand(
 		'git-cl.unstageChangelist',
 		async (...args: unknown[]) => {
-			const changelistName = resolveChangelistName(scmProvider, args);
+			const changelistName = resolveChangelistName(args);
 			const name = changelistName ?? await pickChangelistForAction(scmProvider, 'unstage');
 			if (!name) {
 				return;
@@ -303,7 +306,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	const commitChangelistCmd = vscode.commands.registerCommand(
 		'git-cl.commitChangelist',
 		async (...args: unknown[]) => {
-			const changelistName = resolveChangelistName(scmProvider, args);
+			const changelistName = resolveChangelistName(args);
 			const name = changelistName ?? await pickChangelistForAction(scmProvider, 'commit');
 			if (!name) {
 				return;
@@ -338,26 +341,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 				return;
 			}
 
-			// Get commit message: prefer SCM input box text, else prompt
-			const scmInputBox = scmProvider.getSourceControl().inputBox;
-			let message = scmInputBox.value.trim();
-
-			if (!message) {
-				const input = await vscode.window.showInputBox({
-					prompt: `Commit message for changelist "${name}"`,
-					placeHolder: 'Enter commit message',
-					validateInput: value => {
-						if (!value || value.trim().length === 0) {
-							return 'Commit message cannot be empty';
-						}
-						return null;
-					},
-				});
-				if (!input) {
-					return;
-				}
-				message = input.trim();
+			// Get commit message via input box
+			const input = await vscode.window.showInputBox({
+				prompt: `Commit message for changelist "${name}"`,
+				placeHolder: 'Enter commit message',
+				validateInput: value => {
+					if (!value || value.trim().length === 0) {
+						return 'Commit message cannot be empty';
+					}
+					return null;
+				},
+			});
+			if (!input) {
+				return;
 			}
+			const message = input.trim();
 
 			try {
 				await gitCommit(trackedFiles, message, gitRoot);
@@ -366,9 +364,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 				vscode.window.showErrorMessage(`git-cl: Commit failed: ${msg}`);
 				return;
 			}
-
-			// Clear the SCM input box after successful commit
-			scmInputBox.value = '';
 
 			// Delete the changelist after commit (default behavior)
 			try {
@@ -389,7 +384,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	const diffChangelistCmd = vscode.commands.registerCommand(
 		'git-cl.diffChangelist',
 		async (...args: unknown[]) => {
-			const changelistName = resolveChangelistName(scmProvider, args);
+			const changelistName = resolveChangelistName(args);
 			const name = changelistName ?? await pickChangelistForAction(scmProvider, 'diff');
 			if (!name) {
 				return;
@@ -464,7 +459,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	const checkoutChangelistCmd = vscode.commands.registerCommand(
 		'git-cl.checkoutChangelist',
 		async (...args: unknown[]) => {
-			const changelistName = resolveChangelistName(scmProvider, args);
+			const changelistName = resolveChangelistName(args);
 			const name = changelistName ?? await pickChangelistForAction(scmProvider, 'revert');
 			if (!name) {
 				return;
@@ -519,7 +514,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	const stashChangelistCmd = vscode.commands.registerCommand(
 		'git-cl.stashChangelist',
 		async (...args: unknown[]) => {
-			const changelistName = resolveChangelistName(scmProvider, args);
+			const changelistName = resolveChangelistName(args);
 			const name = changelistName ?? await pickChangelistForAction(scmProvider, 'stash');
 			if (!name) {
 				return;
@@ -634,7 +629,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	const branchFromChangelistCmd = vscode.commands.registerCommand(
 		'git-cl.branchFromChangelist',
 		async (...args: unknown[]) => {
-			const changelistName = resolveChangelistName(scmProvider, args);
+			const changelistName = resolveChangelistName(args);
 			const name = changelistName ?? await pickChangelistForAction(scmProvider, 'branch from');
 			if (!name) {
 				return;
@@ -802,34 +797,64 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 
 /**
+ * Resolve a single file path from a command argument.
+ * Handles both TreeNode (from our tree view) and SourceControlResourceState
+ * (from built-in Git context menu).
+ */
+function resolveFilePathFromArg(
+	gitRoot: string,
+	arg: unknown
+): string | undefined {
+	if (!arg || typeof arg !== 'object') {
+		return undefined;
+	}
+
+	// TreeNode from our tree view
+	if ('type' in (arg as Record<string, unknown>)) {
+		const node = arg as TreeNode;
+		if (node.type === 'changelistFile' || node.type === 'unassignedFile') {
+			return node.filePath;
+		}
+		return undefined;
+	}
+
+	// SourceControlResourceState from built-in Git
+	if ('resourceUri' in (arg as Record<string, unknown>)) {
+		const resource = arg as vscode.SourceControlResourceState;
+		return path.relative(gitRoot, resource.resourceUri.fsPath)
+			.split(path.sep).join('/');
+	}
+
+	return undefined;
+}
+
+/**
  * Resolve file paths from command arguments (context menu) or prompt the user
  * to select files from git status (command palette).
+ * Handles both TreeNode args (from our tree view) and SourceControlResourceState
+ * args (from built-in Git's context menu).
  */
 async function resolveFilePaths(
 	gitRoot: string,
 	args: unknown[]
 ): Promise<string[] | undefined> {
-	// Context menu with multi-select: second arg is the array of selected resources
+	// Context menu with multi-select: second arg is the array of selected items
 	if (args.length >= 2 && Array.isArray(args[1])) {
-		const resources = args[1] as vscode.SourceControlResourceState[];
-		return resources.map(r =>
-			path.relative(gitRoot, r.resourceUri.fsPath).split(path.sep).join('/')
-		);
+		const items = args[1] as unknown[];
+		const paths = items
+			.map(item => resolveFilePathFromArg(gitRoot, item))
+			.filter((p): p is string => p !== undefined);
+		if (paths.length > 0) {
+			return paths;
+		}
 	}
 
-	// Context menu single-select: first arg is the clicked resource
-	if (
-		args.length >= 1 &&
-		args[0] &&
-		typeof args[0] === 'object' &&
-		'resourceUri' in (args[0] as Record<string, unknown>)
-	) {
-		const resource = args[0] as vscode.SourceControlResourceState;
-		return [
-			path.relative(gitRoot, resource.resourceUri.fsPath)
-				.split(path.sep)
-				.join('/'),
-		];
+	// Context menu single-select: first arg is the clicked item
+	if (args.length >= 1 && args[0]) {
+		const filePath = resolveFilePathFromArg(gitRoot, args[0]);
+		if (filePath) {
+			return [filePath];
+		}
 	}
 
 	// Command palette — show file picker from git status
@@ -872,30 +897,26 @@ async function resolveFilePaths(
  */
 async function resolveFilePathsFromChangelists(
 	gitRoot: string,
-	scmProvider: ChangelistSCMProvider,
+	scmProvider: ChangelistTreeDataProvider,
 	args: unknown[]
 ): Promise<string[] | undefined> {
-	// Context menu with multi-select: second arg is the array of selected resources
+	// Context menu with multi-select: second arg is the array of selected items
 	if (args.length >= 2 && Array.isArray(args[1])) {
-		const resources = args[1] as vscode.SourceControlResourceState[];
-		return resources.map(r =>
-			path.relative(gitRoot, r.resourceUri.fsPath).split(path.sep).join('/')
-		);
+		const items = args[1] as unknown[];
+		const paths = items
+			.map(item => resolveFilePathFromArg(gitRoot, item))
+			.filter((p): p is string => p !== undefined);
+		if (paths.length > 0) {
+			return paths;
+		}
 	}
 
-	// Context menu single-select: first arg is the clicked resource
-	if (
-		args.length >= 1 &&
-		args[0] &&
-		typeof args[0] === 'object' &&
-		'resourceUri' in (args[0] as Record<string, unknown>)
-	) {
-		const resource = args[0] as vscode.SourceControlResourceState;
-		return [
-			path.relative(gitRoot, resource.resourceUri.fsPath)
-				.split(path.sep)
-				.join('/'),
-		];
+	// Context menu single-select: first arg is the clicked item
+	if (args.length >= 1 && args[0]) {
+		const filePath = resolveFilePathFromArg(gitRoot, args[0]);
+		if (filePath) {
+			return [filePath];
+		}
 	}
 
 	// Command palette — show file picker from all changelists
@@ -934,7 +955,7 @@ async function resolveFilePathsFromChangelists(
  * Show a QuickPick to select an existing changelist or create a new one.
  */
 async function pickChangelist(
-	scmProvider: ChangelistSCMProvider
+	scmProvider: ChangelistTreeDataProvider
 ): Promise<string | undefined> {
 	const store = scmProvider.getChangelistStore();
 	store.load();
@@ -970,30 +991,29 @@ async function pickChangelist(
 }
 
 /**
- * Resolve changelist name from context menu args (group header click).
- * Returns the name or undefined if not invoked from a group header.
+ * Resolve changelist name from context menu args (tree node click).
+ * Returns the name or undefined if not invoked from a changelist node.
  */
 function resolveChangelistName(
-	_scmProvider: ChangelistSCMProvider,
 	args: unknown[]
 ): string | undefined {
 	if (args.length < 1 || !args[0]) {
 		return undefined;
 	}
 
-	const group = args[0] as vscode.SourceControlResourceGroup;
-	if (typeof group.id !== 'string' || !group.id.startsWith('cl:')) {
-		return undefined;
+	const node = args[0] as TreeNode;
+	if (typeof node === 'object' && node !== null && 'type' in node && node.type === 'changelist') {
+		return node.name;
 	}
 
-	return group.id.slice(3); // strip "cl:" prefix
+	return undefined;
 }
 
 /**
  * Show QuickPick to select a changelist for deletion (command palette flow).
  */
 async function pickChangelistForDeletion(
-	scmProvider: ChangelistSCMProvider
+	scmProvider: ChangelistTreeDataProvider
 ): Promise<string | undefined> {
 	return pickChangelistForAction(scmProvider, 'delete');
 }
@@ -1002,7 +1022,7 @@ async function pickChangelistForDeletion(
  * Show QuickPick to select a changelist for a given action (command palette flow).
  */
 async function pickChangelistForAction(
-	scmProvider: ChangelistSCMProvider,
+	scmProvider: ChangelistTreeDataProvider,
 	action: string
 ): Promise<string | undefined> {
 	const store = scmProvider.getChangelistStore();
@@ -1030,7 +1050,7 @@ async function pickChangelistForAction(
  * Delete a changelist after confirming with the user.
  */
 async function deleteChangelistWithConfirmation(
-	scmProvider: ChangelistSCMProvider,
+	scmProvider: ChangelistTreeDataProvider,
 	name: string
 ): Promise<void> {
 	const store = scmProvider.getChangelistStore();
@@ -1069,7 +1089,7 @@ async function deleteChangelistWithConfirmation(
  * Returns true on success, false on failure (with error shown to user).
  */
 async function stashSingleChangelist(
-	scmProvider: ChangelistSCMProvider,
+	scmProvider: ChangelistTreeDataProvider,
 	name: string,
 	gitRoot: string
 ): Promise<boolean> {
@@ -1197,27 +1217,27 @@ async function stashSingleChangelist(
 }
 
 /**
- * Resolve stash changelist name from context menu args (stashed group header click).
- * Returns the name or undefined if not invoked from a stashed group header.
+ * Resolve stash changelist name from context menu args (tree node click).
+ * Returns the name or undefined if not invoked from a stashed changelist node.
  */
 function resolveStashName(args: unknown[]): string | undefined {
 	if (args.length < 1 || !args[0]) {
 		return undefined;
 	}
 
-	const group = args[0] as vscode.SourceControlResourceGroup;
-	if (typeof group.id !== 'string' || !group.id.startsWith('stash:')) {
-		return undefined;
+	const node = args[0] as TreeNode;
+	if (typeof node === 'object' && node !== null && 'type' in node && node.type === 'stashedChangelist') {
+		return node.name;
 	}
 
-	return group.id.slice(6); // strip "stash:" prefix
+	return undefined;
 }
 
 /**
  * Show QuickPick to select a stashed changelist for an action (command palette flow).
  */
 async function pickStashedChangelistForAction(
-	scmProvider: ChangelistSCMProvider,
+	scmProvider: ChangelistTreeDataProvider,
 	action: string
 ): Promise<string | undefined> {
 	const stashStore = scmProvider.getStashStore();
@@ -1271,7 +1291,7 @@ async function findStashRefByMessage(
  * Returns true on success, false on failure (with error shown to user).
  */
 async function unstashSingleChangelist(
-	scmProvider: ChangelistSCMProvider,
+	scmProvider: ChangelistTreeDataProvider,
 	name: string,
 	gitRoot: string,
 	force: boolean
@@ -1445,7 +1465,7 @@ function colorizeStatus(status: string): string {
  */
 async function showFormattedStatus(
 	outputChannel: vscode.OutputChannel,
-	scmProvider: ChangelistSCMProvider,
+	scmProvider: ChangelistTreeDataProvider,
 	gitRoot: string
 ): Promise<void> {
 	const store = scmProvider.getChangelistStore();
