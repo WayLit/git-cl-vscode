@@ -4,7 +4,7 @@
   "description": "Manage git changelists directly in VS Code. Organizes working changes into logical groups for focused commits.",
   "version": "0.0.1",
   "packageManager": "pnpm@10.30.0",
-  "publisher": "git-cl",
+  "publisher": "waylit",
   "license": "MIT",
   "repository": {
     "type": "git",
