@@ -163,6 +163,30 @@ describe('StashStore', () => {
 		});
 	});
 
+	describe('multiple stashes', () => {
+		it('stores and retrieves multiple stashes independently', () => {
+			const metaA = makeMetadata({ stash_ref: 'stash@{0}', files: ['a.ts'] });
+			const metaB = makeMetadata({ stash_ref: 'stash@{1}', files: ['b.ts'] });
+			const metaC = makeMetadata({ stash_ref: 'stash@{2}', files: ['c.ts'] });
+			store.setStash('cl-a', metaA);
+			store.setStash('cl-b', metaB);
+			store.setStash('cl-c', metaC);
+			expect(store.getNames()).toEqual(['cl-a', 'cl-b', 'cl-c']);
+			expect(store.getStash('cl-b')?.stash_ref).toBe('stash@{1}');
+		});
+
+		it('selective removal leaves other stashes intact', () => {
+			store.setStash('cl-a', makeMetadata({ files: ['a.ts'] }));
+			store.setStash('cl-b', makeMetadata({ files: ['b.ts'] }));
+			store.setStash('cl-c', makeMetadata({ files: ['c.ts'] }));
+			store.removeStash('cl-b');
+			expect(store.getNames()).toEqual(['cl-a', 'cl-c']);
+			expect(store.getStash('cl-b')).toBeUndefined();
+			expect(store.getStash('cl-a')?.files).toEqual(['a.ts']);
+			expect(store.getStash('cl-c')?.files).toEqual(['c.ts']);
+		});
+	});
+
 	describe('getStashedFiles', () => {
 		it('returns set of all files across all stashes', () => {
 			store.setStash('a', makeMetadata({ files: ['x.ts', 'y.ts'] }));
@@ -173,6 +197,14 @@ describe('StashStore', () => {
 
 		it('returns empty set when no stashes', () => {
 			expect(store.getStashedFiles()).toEqual(new Set());
+		});
+
+		it('updates after partial removal', () => {
+			store.setStash('a', makeMetadata({ files: ['x.ts', 'y.ts'] }));
+			store.setStash('b', makeMetadata({ files: ['y.ts', 'z.ts'] }));
+			store.removeStash('a');
+			const files = store.getStashedFiles();
+			expect(files).toEqual(new Set(['y.ts', 'z.ts']));
 		});
 	});
 

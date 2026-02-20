@@ -60,6 +60,40 @@ describe('validateChangelistName', () => {
 		expect(validateChangelistName('HEAD2')).toBeNull();
 		expect(validateChangelistName('my-stash')).toBeNull();
 	});
+
+	it('rejects dots-only names', () => {
+		expect(validateChangelistName('.')).toContain('only dots');
+		expect(validateChangelistName('..')).toContain('only dots');
+		expect(validateChangelistName('...')).toContain('only dots');
+	});
+
+	it('accepts dot-prefixed (hidden-style) names', () => {
+		expect(validateChangelistName('.hidden')).toBeNull();
+		expect(validateChangelistName('.config')).toBeNull();
+	});
+
+	it('does not reserve common branch names', () => {
+		expect(validateChangelistName('main')).toBeNull();
+		expect(validateChangelistName('master')).toBeNull();
+		expect(validateChangelistName('status')).toBeNull();
+		expect(validateChangelistName('add')).toBeNull();
+	});
+
+	it('rejects additional special characters', () => {
+		expect(validateChangelistName('a^b')).toContain('alphanumeric');
+		expect(validateChangelistName('a*b')).toContain('alphanumeric');
+		expect(validateChangelistName('a:b')).toContain('alphanumeric');
+	});
+
+	it('rejects very long names (200 chars)', () => {
+		const longName = 'a'.repeat(200);
+		expect(validateChangelistName(longName)).toContain('at most 100 characters');
+	});
+
+	it('accepts moderate-length names (50 chars)', () => {
+		const name = 'a'.repeat(50);
+		expect(validateChangelistName(name)).toBeNull();
+	});
 });
 
 // ── sanitizeFilePath ────────────────────────────────────────────────────────
@@ -94,6 +128,18 @@ describe('sanitizeFilePath', () => {
 	it('normalizes path separators to forward slashes', () => {
 		// On Linux, path.sep is '/', so this is already normalized
 		expect(sanitizeFilePath('src/file.ts', gitRoot)).toBe('src/file.ts');
+	});
+
+	it('handles non-canonical gitRoot (trailing slash)', () => {
+		expect(sanitizeFilePath('src/file.ts', '/home/user/project/')).toBe('src/file.ts');
+	});
+
+	it('handles non-canonical gitRoot (dot component)', () => {
+		expect(sanitizeFilePath('src/file.ts', '/home/user/./project')).toBe('src/file.ts');
+	});
+
+	it('handles non-canonical gitRoot (double slash)', () => {
+		expect(sanitizeFilePath('src/file.ts', '/home/user//project')).toBe('src/file.ts');
 	});
 });
 
@@ -237,6 +283,26 @@ describe('ChangelistStore', () => {
 		});
 	});
 
+	describe('addFiles — edge cases from git-cl', () => {
+		it('deduplicates files within a single add call', () => {
+			store.addFiles('feat', ['src/a.ts', 'src/a.ts', 'src/a.ts']);
+			expect(store.getFiles('feat')).toEqual(['src/a.ts']);
+		});
+
+		it('handles rapid reassignment across multiple changelists', () => {
+			store.addFiles('cl-a', ['shared.ts']);
+			expect(store.findChangelist('shared.ts')).toBe('cl-a');
+			store.addFiles('cl-b', ['shared.ts']);
+			expect(store.findChangelist('shared.ts')).toBe('cl-b');
+			store.addFiles('cl-c', ['shared.ts']);
+			expect(store.findChangelist('shared.ts')).toBe('cl-c');
+			// Only the last changelist should have it
+			expect(store.getFiles('cl-a')).toEqual([]);
+			expect(store.getFiles('cl-b')).toEqual([]);
+			expect(store.getFiles('cl-c')).toEqual(['shared.ts']);
+		});
+	});
+
 	describe('removeFiles', () => {
 		it('removes files from a changelist', () => {
 			store.addFiles('feat', ['src/a.ts', 'src/b.ts']);
@@ -295,6 +361,19 @@ describe('ChangelistStore', () => {
 			store.deleteAll();
 			expect(store.getAll()).toEqual({});
 			expect(store.getNames()).toEqual([]);
+		});
+
+		it('results in empty state after multiple operations', () => {
+			store.addFiles('feat1', ['a.ts', 'b.ts']);
+			store.addFiles('feat2', ['c.ts']);
+			store.addFiles('feat3', ['d.ts', 'e.ts']);
+			store.deleteAll();
+			store.save();
+
+			const store2 = new ChangelistStore(tmpDir);
+			store2.load();
+			expect(store2.getAll()).toEqual({});
+			expect(store2.getNames()).toEqual([]);
 		});
 	});
 

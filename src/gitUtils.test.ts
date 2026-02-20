@@ -85,6 +85,30 @@ describe('getGitStatus', () => {
 		expect(status.get('deleted.ts')).toBe('D ');
 	});
 
+	it('parses all git status codes', async () => {
+		mockExecSuccess(
+			' M unstaged-mod.ts\n' +
+			'M  staged-mod.ts\n' +
+			'MM mixed-mod.ts\n' +
+			'A  newly-added.ts\n' +
+			'AM added-then-modified.ts\n' +
+			' D unstaged-del.ts\n' +
+			'D  staged-del.ts\n' +
+			'?? untracked.ts\n' +
+			''
+		);
+		const status = await getGitStatus('/project');
+		expect(status.get('unstaged-mod.ts')).toBe(' M');
+		expect(status.get('staged-mod.ts')).toBe('M ');
+		expect(status.get('mixed-mod.ts')).toBe('MM');
+		expect(status.get('newly-added.ts')).toBe('A ');
+		expect(status.get('added-then-modified.ts')).toBe('AM');
+		expect(status.get('unstaged-del.ts')).toBe(' D');
+		expect(status.get('staged-del.ts')).toBe('D ');
+		expect(status.get('untracked.ts')).toBe('??');
+		expect(status.size).toBe(8);
+	});
+
 	it('handles renamed files (extracts new path)', async () => {
 		mockExecSuccess('R  old.ts -> new.ts\n');
 		const status = await getGitStatus('/project');
@@ -123,6 +147,11 @@ describe('gitAdd', () => {
 		await gitAdd([], '/project');
 		expect(mockedExecFile).not.toHaveBeenCalled();
 	});
+
+	it('rejects on git error', async () => {
+		mockExecError('fatal: pathspec did not match');
+		await expect(gitAdd(['nonexistent.ts'], '/project')).rejects.toThrow('git add failed');
+	});
 });
 
 // ── gitReset ────────────────────────────────────────────────────────────────
@@ -143,6 +172,11 @@ describe('gitReset', () => {
 		await gitReset([], '/project');
 		expect(mockedExecFile).not.toHaveBeenCalled();
 	});
+
+	it('rejects on git error', async () => {
+		mockExecError('fatal: ambiguous argument');
+		await expect(gitReset(['nonexistent.ts'], '/project')).rejects.toThrow('git reset failed');
+	});
 });
 
 // ── gitCheckout ─────────────────────────────────────────────────────────────
@@ -162,6 +196,11 @@ describe('gitCheckout', () => {
 	it('does nothing for empty file list', async () => {
 		await gitCheckout([], '/project');
 		expect(mockedExecFile).not.toHaveBeenCalled();
+	});
+
+	it('rejects on git error', async () => {
+		mockExecError('error: pathspec did not match');
+		await expect(gitCheckout(['nonexistent.ts'], '/project')).rejects.toThrow('git checkout failed');
 	});
 });
 

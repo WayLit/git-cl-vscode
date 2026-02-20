@@ -30,6 +30,9 @@ export function validateChangelistName(name: string): string | null {
 	if (!VALID_NAME_RE.test(name)) {
 		return 'Changelist name may only contain alphanumeric characters, hyphens, underscores, and dots';
 	}
+	if (/^\.+$/.test(name)) {
+		return 'Changelist name cannot be only dots';
+	}
 	if (GIT_RESERVED_WORDS.has(name)) {
 		return `"${name}" is a reserved git name and cannot be used as a changelist name`;
 	}
@@ -64,8 +67,10 @@ export function sanitizeFilePath(filePath: string, gitRoot: string): string {
 	}
 
 	// Ensure resolved path stays within git root
+	// Normalize gitRoot so the startsWith comparison is consistent with path.resolve output
+	const resolvedRoot = path.resolve(gitRoot);
 	const resolved = path.resolve(gitRoot, normalized);
-	if (!resolved.startsWith(gitRoot + path.sep) && resolved !== gitRoot) {
+	if (!resolved.startsWith(resolvedRoot + path.sep) && resolved !== resolvedRoot) {
 		throw new Error(`Path escapes git root: ${filePath}`);
 	}
 
