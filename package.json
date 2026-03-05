@@ -3,7 +3,7 @@
   "displayName": "git-cl — Changelist Manager",
   "description": "Manage git changelists directly in VS Code. Organizes working changes into logical groups for focused commits.",
   "version": "0.0.2-0",
-  "packageManager": "pnpm@10.30.1",
+  "packageManager": "pnpm@10.30.2",
   "publisher": "waylit",
   "license": "MIT",
   "repository": {
@@ -25,12 +25,14 @@
       {
         "command": "git-cl.showStatus",
         "title": "Show Changelist Status",
-        "category": "git-cl"
+        "category": "git-cl",
+        "icon": "$(list-unordered)"
       },
       {
         "command": "git-cl.addToChangelist",
         "title": "Add to Changelist",
-        "category": "git-cl"
+        "category": "git-cl",
+        "icon": "$(add)"
       },
       {
         "command": "git-cl.removeFromChangelist",
@@ -53,7 +55,8 @@
       {
         "command": "git-cl.deleteAllChangelists",
         "title": "Delete All Changelists",
-        "category": "git-cl"
+        "category": "git-cl",
+        "icon": "$(trash)"
       },
       {
         "command": "git-cl.stageChangelist",
@@ -124,6 +127,7 @@
         {
           "id": "git-cl.changelists",
           "name": "Changelists",
+          "icon": "$(list-tree)",
           "when": "git-cl:hasGitRoot"
         }
       ]
@@ -230,6 +234,11 @@
           "command": "git-cl.openFileDiff",
           "when": "view == git-cl.changelists && viewItem == changelistFile",
           "group": "2_diff"
+        },
+        {
+          "command": "git-cl.addToChangelist",
+          "when": "view == git-cl.changelists && viewItem == unassignedFile",
+          "group": "inline@1"
         },
         {
           "command": "git-cl.addToChangelist",

@@ -29,6 +29,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	const scmProvider = new ChangelistTreeDataProvider(gitRoot, outputChannel);
 	const treeView = vscode.window.createTreeView('git-cl.changelists', {
 		treeDataProvider: scmProvider,
+		dragAndDropController: scmProvider,
 		showCollapseAll: true,
 		canSelectMany: true,
 	});

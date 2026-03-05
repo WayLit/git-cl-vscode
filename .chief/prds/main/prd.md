@@ -1,0 +1,379 @@
+# git-cl for VS Code
+
+## Overview
+
+A VS Code extension that brings [git-cl](https://github.com/BHFock/git-cl) changelist management directly into the editor. The extension re-implements the git-cl Python CLI in TypeScript so it is fully standalone (no Python dependency). It integrates into the Source Control sidebar with a dedicated "Changelists" section, exposes all git-cl operations as commands/buttons, and adds context menu entries to the built-in "Changes" file list so users can assign files to changelists without leaving VS Code.
+
+---
+
+## User Stories
+
+### US-001: Extension Scaffold & Build Tooling
+
+**Priority:** 1
+**Description:** As a developer, I want a properly scaffolded VS Code extension project so that I have a working build/debug/package pipeline from day one.
+
+**Acceptance Criteria:**
+
+- [ ] `package.json` with extension manifest (`contributes`, `activationEvents`, `engines`)
+- [ ] TypeScript configuration (`tsconfig.json`) targeting ES2020+ with strict mode
+- [ ] Build script (esbuild or webpack) that bundles the extension into a single `.js` file
+- [ ] `.vscodeignore` and basic `.gitignore`
+- [ ] Extension activates on any workspace containing a `.git` directory
+- [ ] `npm run build` produces a working `.vsix` that installs in VS Code
+- [ ] Dev workflow: `F5` launches Extension Development Host
+
+---
+
+### US-002: Core Data Model — Changelist Storage
+
+**Priority:** 1
+**Description:** As a developer, I want a TypeScript module that reads/writes `cl.json` and `cl-stashes.json` inside `.git/` so that changelist data is stored in the same format as the original git-cl tool.
+
+**Acceptance Criteria:**
+
+- [ ] `ChangelistStore` class that loads/saves `.git/cl.json` (JSON object mapping changelist names to string arrays of relative file paths)
+- [ ] `StashStore` class that loads/saves `.git/cl-stashes.json` (JSON object mapping changelist names to stash metadata: `stash_ref`, `stash_message`, `files`, `timestamp`, `source_branch`, `file_categories`)
+- [ ] Empty changelists are omitted on save (matches Python behavior)
+- [ ] Changelist name validation: alphanumeric + hyphens + underscores + dots only, max 100 chars, rejects git reserved words (`HEAD`, `MERGE_HEAD`, etc.)
+- [ ] File path sanitization: paths resolved relative to git root, rejects `..`, absolute paths, and unsafe characters
+- [ ] Files cannot belong to more than one active changelist — adding to one removes from others
+- [ ] Files in stashed changelists cannot be added to active changelists
+- [ ] Data format is fully compatible with the original Python git-cl tool (interoperable)
+
+---
+
+### US-003: Git Utility Layer
+
+**Priority:** 1
+**Description:** As a developer, I want TypeScript utility functions that wrap common git operations so that the extension can interact with git without shelling out ad-hoc.
+
+**Acceptance Criteria:**
+
+- [ ] `getGitRoot()` — returns absolute path to repository root
+- [ ] `getGitStatus()` — runs `git status --porcelain` and returns parsed file status map (path -> 2-char status code)
+- [ ] `gitAdd(files)` — stages specified files
+- [ ] `gitReset(files)` — unstages specified files (`git reset HEAD`)
+- [ ] `gitCheckout(files)` — reverts files to HEAD (`git checkout HEAD --`)
+- [ ] `gitCommit(files, message)` — commits specified staged files with message
+- [ ] `gitDiff(files, options)` — returns diff output (supports `--staged` flag)
+- [ ] `gitStashPush(message, files?)` — creates a stash with optional file filtering
+- [ ] `gitStashPop(ref)` — pops a specific stash reference
+- [ ] `gitStashList()` — lists stash entries with messages
+- [ ] `getCurrentBranch()` — returns current branch name or null if detached
+- [ ] `gitCheckoutBranch(name, base?)` — creates and switches to a new branch
+- [ ] All functions use `child_process.execFile` (not shell) for safety
+- [ ] All paths passed to git are resolved relative to git root
+
+---
+
+### US-004: Changelist Tree View
+
+**Priority:** 1
+**Description:** As a user, I want to see my changelists in a dedicated tree view in the Source Control sidebar so that I can visually manage which files belong to which changelist.
+
+**Acceptance Criteria:**
+
+- [ ] Extension registers a `TreeDataProvider` and creates a `TreeView` via `vscode.window.createTreeView`
+- [ ] The tree view is contributed to the SCM viewlet via `contributes.views` in `scm`
+- [ ] Each active changelist appears as a collapsible parent node with the changelist name as its label
+- [ ] Files within each changelist node are shown as child leaf nodes with their relative path
+- [ ] An "Unassigned" top-level node shows modified/staged/untracked files not in any changelist
+- [ ] Clicking a file node opens a diff view (working copy vs HEAD)
+- [ ] The tree auto-refreshes when `cl.json` changes or git status changes (via `TreeDataProvider.onDidChangeTreeData`)
+- [ ] A "Stashed" top-level node shows stashed changelists (read-only, with timestamp and source branch info)
+
+---
+
+### US-005: File Status Decorations
+
+**Priority:** 1
+**Description:** As a user, I want to see git status indicators on files in the changelist tree so I can tell which files are staged, modified, untracked, or deleted at a glance.
+
+**Acceptance Criteria:**
+
+- [ ] Each file in the changelist tree shows its 2-character git status code (e.g., `M`, `A`, `??`, `D`)
+- [ ] Files are decorated with VS Code's standard SCM color scheme (modified = yellow/orange, added = green, deleted = red, untracked = green)
+- [ ] Files that no longer exist on disk are marked with a warning indicator
+- [ ] Status updates automatically when the user modifies/saves files
+
+---
+
+### US-006: Add Files to Changelist
+
+**Priority:** 1
+**Description:** As a user, I want to add files to a changelist via context menus, command palette, and drag-and-drop so that I can organize my working changes into logical groups.
+
+**Acceptance Criteria:**
+
+- [ ] Command `git-cl.addToChangelist` available in the command palette
+- [ ] Context menu item "Add to Changelist" appears when right-clicking files in the built-in SCM Changes section
+- [ ] Context menu item "Add to Changelist" appears when right-clicking files in the Unassigned group
+- [ ] Multi-select supported — user can select multiple files and add them all at once
+- [ ] Prompts user to pick an existing changelist or type a new name (QuickPick with text input)
+- [ ] Drag-and-drop supported: user can drag one or more files from the Unassigned group (or another changelist) and drop them onto a changelist node to add/move them
+- [ ] The `TreeView` implements `TreeDragAndDropController` with a custom MIME type (e.g., `application/vnd.code.tree.gitClChangelists`)
+- [ ] Drop target highlights the changelist node during drag-over
+- [ ] If the file is already in another changelist, it is silently moved (matches git-cl behavior)
+- [ ] Tree view refreshes immediately after adding
+
+---
+
+### US-007: Remove Files from Changelist
+
+**Priority:** 1
+**Description:** As a user, I want to remove files from a changelist so they return to the unassigned pool.
+
+**Acceptance Criteria:**
+
+- [ ] Command `git-cl.removeFromChangelist` available in command palette
+- [ ] Context menu item "Remove from Changelist" appears when right-clicking a file inside a changelist group
+- [ ] Multi-select supported
+- [ ] File moves back to the "Unassigned" group
+- [ ] Tree view refreshes immediately
+
+---
+
+### US-008: Delete Changelist
+
+**Priority:** 2
+**Description:** As a user, I want to delete an entire changelist so I can clean up groups I no longer need.
+
+**Acceptance Criteria:**
+
+- [ ] Command `git-cl.deleteChangelist` available in command palette
+- [ ] Inline delete button (trash icon) on the changelist group header in the tree
+- [ ] Confirmation prompt before deletion (shows how many files will be unassigned)
+- [ ] "Delete All Changelists" variant available via command palette
+- [ ] Deleted changelist's files move to the Unassigned group
+- [ ] Tree view refreshes immediately
+
+---
+
+### US-009: Stage Changelist
+
+**Priority:** 1
+**Description:** As a user, I want to stage all tracked files in a changelist with one click so I can prepare them for commit.
+
+**Acceptance Criteria:**
+
+- [ ] Command `git-cl.stageChangelist` available in command palette
+- [ ] Inline "stage" button (+ icon) on the changelist group header
+- [ ] Only tracked files are staged (untracked files are skipped, matching git-cl behavior)
+- [ ] Optional `--delete` behavior: if invoked with delete flag, changelist is removed after staging
+- [ ] Notification shown if no tracked files to stage
+- [ ] Git index and tree view refresh after staging
+
+---
+
+### US-010: Unstage Changelist
+
+**Priority:** 2
+**Description:** As a user, I want to unstage all files in a changelist so I can undo a stage operation.
+
+**Acceptance Criteria:**
+
+- [ ] Command `git-cl.unstageChangelist` available in command palette
+- [ ] Inline "unstage" button on the changelist group header
+- [ ] Only files with staged changes are unstaged (`git reset HEAD`)
+- [ ] Notification shown if no staged files to unstage
+- [ ] Git index and tree view refresh after unstaging
+
+---
+
+### US-011: Commit Changelist
+
+**Priority:** 1
+**Description:** As a user, I want to commit all tracked files in a changelist with a commit message so I can make focused, logical commits.
+
+**Acceptance Criteria:**
+
+- [ ] Command `git-cl.commitChangelist` available in command palette
+- [ ] Inline "commit" button (checkmark icon) on the changelist group header
+- [ ] Prompts for a commit message via an input box (or uses the SCM input box text if present)
+- [ ] Stages tracked files from the changelist, then commits with the provided message
+- [ ] Changelist is deleted after successful commit (default behavior)
+- [ ] Option to keep the changelist after commit (via a setting or modifier)
+- [ ] Shows error notification if commit fails (e.g., no tracked files, empty message)
+- [ ] Tree view refreshes after commit
+
+---
+
+### US-012: Diff Changelist
+
+**Priority:** 2
+**Description:** As a user, I want to see the combined diff of all files in a changelist so I can review my changes before committing.
+
+**Acceptance Criteria:**
+
+- [ ] Command `git-cl.diffChangelist` available in command palette
+- [ ] Context menu item on the changelist group header
+- [ ] Opens a multi-file diff view or sequential diff tabs for each file in the changelist
+- [ ] Supports showing unstaged changes (default), staged changes, or both
+- [ ] Works correctly for files in subdirectories
+
+---
+
+### US-013: Checkout (Revert) Changelist
+
+**Priority:** 2
+**Description:** As a user, I want to revert all files in a changelist to their HEAD state so I can discard unwanted changes.
+
+**Acceptance Criteria:**
+
+- [ ] Command `git-cl.checkoutChangelist` available in command palette
+- [ ] Context menu item on changelist group header
+- [ ] Confirmation dialog before reverting (warns about data loss, shows file count)
+- [ ] Executes `git checkout HEAD --` on all files in the changelist
+- [ ] Option to delete the changelist after checkout
+- [ ] Tree view refreshes after revert
+
+---
+
+### US-014: Changelist Status Display
+
+**Priority:** 2
+**Description:** As a user, I want a status summary view showing all changelists and their files grouped by status so I can get a quick overview equivalent to `git cl status`.
+
+**Acceptance Criteria:**
+
+- [ ] Command `git-cl.showStatus` available in command palette
+- [ ] Opens an output channel or webview panel showing formatted status
+- [ ] Active changelists shown with their files and git status codes
+- [ ] Stashed changelists section with timestamp and source branch
+- [ ] Unassigned files section
+- [ ] Color-coded output matching git-cl's terminal colors
+
+---
+
+### US-015: Stash Changelist
+
+**Priority:** 3
+**Description:** As a user, I want to stash a changelist so I can temporarily save its changes and work on something else.
+
+**Acceptance Criteria:**
+
+- [ ] Command `git-cl.stashChangelist` available in command palette
+- [ ] Context menu item on changelist group header
+- [ ] Categorizes files by status (unstaged changes, staged additions, untracked, deleted) matching git-cl behavior
+- [ ] Creates a git stash with message format `git-cl-stash:<name>:<timestamp>`
+- [ ] Saves stash metadata to `cl-stashes.json` (stash_ref, timestamp, source_branch, file_categories)
+- [ ] Removes changelist from `cl.json` after successful stash
+- [ ] "Stash All" variant available via command palette
+- [ ] Shows error if changelist contains files that cannot be stashed (clean files, staged-only files)
+- [ ] Rollback on failure: drops stash and restores metadata if save fails
+- [ ] Stashed changelist appears in the Stashed section of the tree
+
+---
+
+### US-016: Unstash Changelist
+
+**Priority:** 3
+**Description:** As a user, I want to unstash a previously stashed changelist so I can resume working on it.
+
+**Acceptance Criteria:**
+
+- [ ] Command `git-cl.unstashChangelist` available in command palette
+- [ ] Context menu item on stashed changelist entries in the tree
+- [ ] Validates branch workflow: warns if current branch differs from source branch, checks for clean working directory
+- [ ] Detects conflicts before applying (untracked files, unstaged modifications that would conflict)
+- [ ] Suggests workflow actions if conflicts are found (commit, stash, or discard conflicting files)
+- [ ] Finds correct stash reference by message (handles shifted stash indices)
+- [ ] Executes `git stash pop` and restores changelist to `cl.json`
+- [ ] "Unstash All" variant available
+- [ ] `--force` equivalent: option to skip branch/conflict checks
+- [ ] Tree view refreshes to show restored changelist in active section
+
+---
+
+### US-017: Branch from Changelist
+
+**Priority:** 3
+**Description:** As a user, I want to create a new branch from a changelist so I can isolate a set of changes into its own branch.
+
+**Acceptance Criteria:**
+
+- [ ] Command `git-cl.branchFromChangelist` available in command palette
+- [ ] Prompts for branch name (defaults to changelist name)
+- [ ] Optionally prompts for base branch (defaults to current branch)
+- [ ] Validates: changelist is active and non-empty, branch name doesn't already exist, no unassigned uncommitted changes
+- [ ] Stashes all active changelists, creates branch, unstashes target changelist
+- [ ] On failure: restores all stashes and returns to original branch
+- [ ] Tree view refreshes after branch switch
+
+---
+
+### US-018: Context Menus in Built-in Changes Section
+
+**Priority:** 2
+**Description:** As a user, I want "Add to Changelist" in the right-click menu of the built-in Git Changes section so I can assign files without switching to the changelist tree.
+
+**Acceptance Criteria:**
+
+- [ ] "Add to Changelist" menu item in `scm/resourceState/context` for the built-in git SCM provider
+- [ ] Works with multi-selection (right-click after selecting multiple files)
+- [ ] Shows QuickPick to choose or create a changelist
+- [ ] Correctly resolves file paths from the built-in SCM resource URIs
+- [ ] Menu item only visible when in a git repository
+
+---
+
+### US-019: Inline Action Buttons
+
+**Priority:** 2
+**Description:** As a user, I want inline action buttons on changelist groups and files so I can perform common operations quickly.
+
+**Acceptance Criteria:**
+
+- [ ] Changelist group header has inline buttons: Stage (+), Commit (checkmark), Delete (trash)
+- [ ] Individual file entries have inline buttons: Remove from Changelist (x), Open Diff
+- [ ] Stashed changelist entries have inline button: Unstash
+- [ ] Buttons use standard VS Code codicon icons
+- [ ] Buttons are defined in `contributes.menus` with appropriate `when` clauses
+
+---
+
+### US-020: File Watcher & Auto-Refresh
+
+**Priority:** 2
+**Description:** As a user, I want the changelist tree to automatically update when `cl.json` is modified externally (e.g., by the CLI tool) or when git status changes, so the UI always reflects the current state.
+
+**Acceptance Criteria:**
+
+- [ ] `FileSystemWatcher` monitors `.git/cl.json` and `.git/cl-stashes.json` for changes
+- [ ] Tree view refreshes within 500ms of external file modification
+- [ ] Git status changes (file save, stage, commit) trigger a tree refresh
+- [ ] Debounced refresh to avoid excessive updates during rapid changes
+- [ ] Works correctly when switching branches (git status changes entirely)
+
+---
+
+### US-021: Unit Tests for Core Modules
+
+**Priority:** 3
+**Description:** As a developer, I want unit tests for the data model and git utility modules so I can refactor with confidence.
+
+**Acceptance Criteria:**
+
+- [ ] Tests for `ChangelistStore`: load, save, add, remove, validate name, sanitize path, interop with empty changelists
+- [ ] Tests for `StashStore`: load, save, metadata structure
+- [ ] Tests for git utilities: status parsing, path resolution
+- [ ] Tests for name validation edge cases (reserved words, special chars, length limits)
+- [ ] Tests run via `npm test` using a test framework (vitest or mocha)
+- [ ] At least 80% code coverage on core data model modules
+
+---
+
+### US-022: Error Handling & User Notifications
+
+**Priority:** 3
+**Description:** As a user, I want clear error messages and notifications when operations fail so I can understand what went wrong and how to fix it.
+
+**Acceptance Criteria:**
+
+- [ ] All git command failures show an error notification with the git error message
+- [ ] Invalid changelist name shows a descriptive error (which characters are allowed, max length)
+- [ ] File-not-found warnings (files in changelist that no longer exist on disk)
+- [ ] Stash conflicts show actionable suggestions (same as CLI tool's `suggest_workflow_actions`)
+- [ ] Network/permission errors are caught and reported gracefully
+- [ ] No unhandled promise rejections — all async operations have error boundaries
