@@ -147,13 +147,17 @@ export type TreeNode =
 	| { type: 'stashedChangelist'; name: string; metadata: StashMetadata }
 	| { type: 'stashedFile'; filePath: string; stashName: string };
 
+const TREE_MIME_TYPE = 'application/vnd.code.tree.git-cl.changelists';
+
 /**
  * TreeDataProvider that surfaces changelists in a TreeView within the
  * Source Control sidebar.
  *
  * Tree structure: [active changelists] → Unassigned → [stashed changelists].
  */
-export class ChangelistTreeDataProvider implements vscode.TreeDataProvider<TreeNode>, vscode.Disposable {
+export class ChangelistTreeDataProvider implements vscode.TreeDataProvider<TreeNode>, vscode.TreeDragAndDropController<TreeNode>, vscode.Disposable {
+	readonly dropMimeTypes = [TREE_MIME_TYPE];
+	readonly dragMimeTypes = [TREE_MIME_TYPE];
 	private readonly _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined | void>();
 	readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
@@ -418,6 +422,80 @@ export class ChangelistTreeDataProvider implements vscode.TreeDataProvider<TreeN
 			default:
 				return [];
 		}
+	}
+
+	handleDrag(source: readonly TreeNode[], dataTransfer: vscode.DataTransfer, _token: vscode.CancellationToken): void {
+		// Only allow dragging file nodes (changelist files and unassigned files)
+		const draggable = source.filter(
+			n => n.type === 'changelistFile' || n.type === 'unassignedFile'
+		);
+		if (draggable.length > 0) {
+			dataTransfer.set(TREE_MIME_TYPE, new vscode.DataTransferItem(draggable));
+		}
+	}
+
+	async handleDrop(target: TreeNode | undefined, dataTransfer: vscode.DataTransfer, _token: vscode.CancellationToken): Promise<void> {
+		const transferItem = dataTransfer.get(TREE_MIME_TYPE);
+		if (!transferItem) {
+			return;
+		}
+
+		const draggedNodes: TreeNode[] = transferItem.value;
+		if (!draggedNodes || draggedNodes.length === 0) {
+			return;
+		}
+
+		// Determine target changelist name
+		let targetChangelist: string | undefined;
+		if (target) {
+			if (target.type === 'changelist') {
+				targetChangelist = target.name;
+			} else if (target.type === 'changelistFile') {
+				targetChangelist = target.changelistName;
+			}
+		}
+
+		// Dropping onto unassigned section or stashed items: remove from changelist
+		if (!targetChangelist) {
+			if (target?.type === 'unassignedSection' || target?.type === 'unassignedFile') {
+				const filePaths = draggedNodes
+					.filter((n): n is Extract<TreeNode, { type: 'changelistFile' }> => n.type === 'changelistFile')
+					.map(n => n.filePath);
+				if (filePaths.length > 0) {
+					for (const filePath of filePaths) {
+						const clName = this.changelistStore.findChangelist(filePath);
+						if (clName) {
+							this.changelistStore.removeFiles(clName, [filePath]);
+						}
+					}
+					this.changelistStore.save();
+					await this.refresh();
+				}
+			}
+			return;
+		}
+
+		// Collect file paths from dragged nodes
+		const filePaths = draggedNodes
+			.filter((n): n is Extract<TreeNode, { type: 'changelistFile' | 'unassignedFile' }> =>
+				n.type === 'changelistFile' || n.type === 'unassignedFile'
+			)
+			.map(n => n.filePath);
+
+		if (filePaths.length === 0) {
+			return;
+		}
+
+		try {
+			this.changelistStore.addFiles(targetChangelist, filePaths, this.stashStore);
+			this.changelistStore.save();
+		} catch (e: unknown) {
+			const msg = e instanceof Error ? e.message : String(e);
+			vscode.window.showErrorMessage(`git-cl: ${msg}`);
+			return;
+		}
+
+		await this.refresh();
 	}
 
 	private createFileCommand(filePath: string, uri: vscode.Uri): vscode.Command {
