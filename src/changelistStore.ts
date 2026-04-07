@@ -88,8 +88,8 @@ export class ChangelistStore {
 	private readonly filePath: string;
 	private data: ChangelistData = {};
 
-	constructor(private readonly gitRoot: string) {
-		this.filePath = path.join(gitRoot, '.git', 'cl.json');
+	constructor(private readonly gitRoot: string, gitCommonDir?: string) {
+		this.filePath = path.join(gitCommonDir ?? path.join(gitRoot, '.git'), 'cl.json');
 	}
 
 	/** Load changelists from disk. Returns empty data if file doesn't exist. */

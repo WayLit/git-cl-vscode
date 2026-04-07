@@ -175,9 +175,12 @@ export class ChangelistTreeDataProvider implements vscode.TreeDataProvider<TreeN
 	private cachedGitStatus: GitStatusMap = new Map();
 	private cachedUnassigned: string[] = [];
 
-	constructor(private readonly gitRoot: string, private readonly outputChannel?: vscode.OutputChannel) {
-		this.changelistStore = new ChangelistStore(gitRoot);
-		this.stashStore = new StashStore(gitRoot);
+	private readonly gitCommonDir: string;
+
+	constructor(private readonly gitRoot: string, private readonly outputChannel?: vscode.OutputChannel, gitCommonDir?: string) {
+		this.gitCommonDir = gitCommonDir ?? path.join(gitRoot, '.git');
+		this.changelistStore = new ChangelistStore(gitRoot, this.gitCommonDir);
+		this.stashStore = new StashStore(gitRoot, this.gitCommonDir);
 
 		// Register HEAD content provider for diffs
 		this.disposables.push(
@@ -202,7 +205,7 @@ export class ChangelistTreeDataProvider implements vscode.TreeDataProvider<TreeN
 	}
 
 	private setupWatchers(): void {
-		const gitDir = path.join(this.gitRoot, '.git');
+		const gitDir = this.gitCommonDir;
 
 		// Watch cl.json, cl-stashes.json, git index, and HEAD (for branch switches)
 		const patterns = ['cl.json', 'cl-stashes.json', 'index', 'HEAD'];

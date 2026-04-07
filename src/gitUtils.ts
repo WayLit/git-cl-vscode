@@ -42,6 +42,18 @@ export async function getGitRoot(cwd: string): Promise<string> {
 }
 
 /**
+ * Returns the absolute path to the common git directory.
+ * In a regular repo this is `<root>/.git`, in a worktree it resolves to
+ * the main repository's `.git` directory (where cl.json lives).
+ */
+export async function getGitCommonDir(cwd: string): Promise<string> {
+	const output = await execGit(['rev-parse', '--git-common-dir'], cwd);
+	const result = output.trim();
+	// --git-common-dir may return a relative path; resolve it
+	return path.resolve(cwd, result);
+}
+
+/**
  * Runs `git status --porcelain` and returns a parsed map of
  * relative file path → 2-character status code (e.g., " M", "??", "A ").
  */

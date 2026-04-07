@@ -32,8 +32,8 @@ export class StashStore {
 	private readonly filePath: string;
 	private data: StashData = {};
 
-	constructor(private readonly gitRoot: string) {
-		this.filePath = path.join(gitRoot, '.git', 'cl-stashes.json');
+	constructor(private readonly gitRoot: string, gitCommonDir?: string) {
+		this.filePath = path.join(gitCommonDir ?? path.join(gitRoot, '.git'), 'cl-stashes.json');
 	}
 
 	/** Load stash data from disk. Returns empty data if file doesn't exist. */

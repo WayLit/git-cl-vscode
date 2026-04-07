@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { getGitRoot, getGitStatus, gitAdd, gitReset, gitCommit, gitCheckout, gitStashPush, gitStashDrop, gitStashPop, gitStashList, getCurrentBranch, gitCheckoutBranch, gitBranchExists, gitCheckoutExistingBranch } from './gitUtils';
+import { getGitRoot, getGitCommonDir, getGitStatus, gitAdd, gitReset, gitCommit, gitCheckout, gitStashPush, gitStashDrop, gitStashPop, gitStashList, getCurrentBranch, gitCheckoutBranch, gitBranchExists, gitCheckoutExistingBranch } from './gitUtils';
 import { ChangelistTreeDataProvider, TreeNode } from './changelistTreeProvider';
 import { validateChangelistName } from './changelistStore';
 import { FileCategories, StashMetadata } from './stashStore';
@@ -24,9 +24,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		return;
 	}
 
+	// Resolve the common git dir (handles worktrees where .git is a file, not a directory)
+	let gitCommonDir: string;
+	try {
+		gitCommonDir = await getGitCommonDir(workspaceFolder.uri.fsPath);
+	} catch {
+		gitCommonDir = path.join(gitRoot, '.git');
+	}
+
 	// Initialize TreeView provider (changelists section in Source Control sidebar)
 	vscode.commands.executeCommand('setContext', 'git-cl:hasGitRoot', true);
-	const scmProvider = new ChangelistTreeDataProvider(gitRoot, outputChannel);
+	const scmProvider = new ChangelistTreeDataProvider(gitRoot, outputChannel, gitCommonDir);
 	const treeView = vscode.window.createTreeView('git-cl.changelists', {
 		treeDataProvider: scmProvider,
 		dragAndDropController: scmProvider,
