@@ -35,105 +35,6 @@ class HeadContentProvider implements vscode.TextDocumentContentProvider {
 	}
 }
 
-/**
- * Provides file decorations (status badge + color) for files shown in the
- * changelist tree. Decorations update whenever the tree view refreshes.
- */
-class ChangelistDecorationProvider implements vscode.FileDecorationProvider {
-	private readonly _onDidChangeFileDecorations = new vscode.EventEmitter<vscode.Uri | vscode.Uri[] | undefined>();
-	readonly onDidChangeFileDecorations = this._onDidChangeFileDecorations.event;
-
-	private gitStatus: GitStatusMap = new Map();
-	private trackedUris = new Set<string>();
-	private readonly gitRoot: string;
-
-	constructor(gitRoot: string) {
-		this.gitRoot = gitRoot;
-	}
-
-	update(gitStatus: GitStatusMap, filePaths: Set<string>): void {
-		this.gitStatus = gitStatus;
-		this.trackedUris.clear();
-		for (const fp of filePaths) {
-			this.trackedUris.add(vscode.Uri.file(path.join(this.gitRoot, fp)).toString());
-		}
-		this._onDidChangeFileDecorations.fire(undefined);
-	}
-
-	provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
-		if (uri.scheme !== 'file' || !this.trackedUris.has(uri.toString())) {
-			return undefined;
-		}
-
-		const filePath = path.relative(this.gitRoot, uri.fsPath).split(path.sep).join('/');
-		const status = this.gitStatus.get(filePath);
-		const isGitDeleted = status !== undefined &&
-			(status[1] === 'D' || (status[0] === 'D' && status[1] === ' '));
-
-		// File is in a changelist but no longer on disk and not a git-tracked deletion
-		if (!isGitDeleted && !fs.existsSync(uri.fsPath)) {
-			return new vscode.FileDecoration(
-				'!',
-				'File no longer exists on disk',
-				new vscode.ThemeColor('gitDecoration.deletedResourceForeground')
-			);
-		}
-
-		if (!status) {
-			return undefined;
-		}
-
-		return statusToDecoration(status);
-	}
-
-	dispose(): void {
-		this._onDidChangeFileDecorations.dispose();
-	}
-}
-
-function statusToDecoration(status: string): vscode.FileDecoration | undefined {
-	if (status === '??') {
-		return new vscode.FileDecoration('U', 'Untracked', new vscode.ThemeColor('gitDecoration.untrackedResourceForeground'));
-	}
-
-	const index = status[0];
-	const working = status[1];
-
-	// Conflicts (UU, AA, DD, AU, UA, DU, UD)
-	if (index === 'U' || working === 'U' ||
-		(index === 'A' && working === 'A') ||
-		(index === 'D' && working === 'D')) {
-		return new vscode.FileDecoration('!', 'Conflict', new vscode.ThemeColor('gitDecoration.conflictingResourceForeground'));
-	}
-
-	// Deleted
-	if (working === 'D' || index === 'D') {
-		return new vscode.FileDecoration('D', 'Deleted', new vscode.ThemeColor('gitDecoration.deletedResourceForeground'));
-	}
-
-	// Added
-	if (index === 'A') {
-		return new vscode.FileDecoration('A', 'Added', new vscode.ThemeColor('gitDecoration.addedResourceForeground'));
-	}
-
-	// Renamed
-	if (index === 'R') {
-		return new vscode.FileDecoration('R', 'Renamed', new vscode.ThemeColor('gitDecoration.modifiedResourceForeground'));
-	}
-
-	// Copied
-	if (index === 'C') {
-		return new vscode.FileDecoration('C', 'Copied', new vscode.ThemeColor('gitDecoration.addedResourceForeground'));
-	}
-
-	// Modified
-	if (working === 'M' || index === 'M') {
-		return new vscode.FileDecoration('M', 'Modified', new vscode.ThemeColor('gitDecoration.modifiedResourceForeground'));
-	}
-
-	return undefined;
-}
-
 function formatStashLabel(name: string, meta: StashMetadata): string {
 	const date = new Date(meta.timestamp).toLocaleDateString();
 	return `${name} (stashed from ${meta.source_branch}, ${date})`;
@@ -163,7 +64,6 @@ export class ChangelistTreeDataProvider implements vscode.TreeDataProvider<TreeN
 
 	private readonly changelistStore: ChangelistStore;
 	private readonly stashStore: StashStore;
-	private readonly decorationProvider: ChangelistDecorationProvider;
 	private readonly disposables: vscode.Disposable[] = [];
 
 	private refreshTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -188,13 +88,6 @@ export class ChangelistTreeDataProvider implements vscode.TreeDataProvider<TreeN
 				HEAD_SCHEME,
 				new HeadContentProvider(gitRoot)
 			)
-		);
-
-		// Register file decoration provider for status badges and colors
-		this.decorationProvider = new ChangelistDecorationProvider(gitRoot);
-		this.disposables.push(
-			vscode.window.registerFileDecorationProvider(this.decorationProvider),
-			this.decorationProvider
 		);
 
 		this.setupWatchers();
@@ -256,11 +149,9 @@ export class ChangelistTreeDataProvider implements vscode.TreeDataProvider<TreeN
 
 		// Compute unassigned files
 		const assignedFiles = new Set<string>();
-		const allDisplayedFiles = new Set<string>();
 		for (const files of Object.values(this.cachedChangelists)) {
 			for (const f of files) {
 				assignedFiles.add(f);
-				allDisplayedFiles.add(f);
 			}
 		}
 
@@ -269,12 +160,8 @@ export class ChangelistTreeDataProvider implements vscode.TreeDataProvider<TreeN
 		for (const [filePath] of gitStatus) {
 			if (!assignedFiles.has(filePath) && !stashedFiles.has(filePath)) {
 				this.cachedUnassigned.push(filePath);
-				allDisplayedFiles.add(filePath);
 			}
 		}
-
-		// Update decoration provider with current status for all displayed files
-		this.decorationProvider.update(gitStatus, allDisplayedFiles);
 
 		// Check for files in changelists that no longer exist on disk
 		const currentMissingFiles = new Set<string>();
