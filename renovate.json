@@ -8,6 +8,7 @@
   "internalChecksFilter": "strict",
 
   "schedule": ["before 6am on monday"],
+  "separateMajorMinor": false,
   "packageRules": [
     {
       "description": "Batch every routine update, major included, into one PR",
