@@ -1,15 +1,17 @@
-name: CI
+name: Release
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  release:
+    types: [published]
 
 permissions: {}
 
+# Caching is deliberately disabled throughout this workflow: it produces the
+# artifact published to the Marketplace, and a poisoned cache would be baked
+# into that artifact. CI keeps its cache; the shipping path does not.
+
 jobs:
-  build:
+  verify:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -23,7 +25,7 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24
-          cache: pnpm
+          package-manager-cache: false
 
       - run: pnpm install --frozen-lockfile
 
@@ -34,19 +36,22 @@ jobs:
       - run: pnpm test:coverage
 
   publish:
-    if: github.event_name == 'release' && github.event.action == 'published'
-    needs: build
+    needs: verify
     runs-on: ubuntu-latest
     environment: release
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24
-          cache: pnpm
+          package-manager-cache: false
 
       - run: pnpm install --frozen-lockfile
 
