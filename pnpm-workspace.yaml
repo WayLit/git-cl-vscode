@@ -1,0 +1,8 @@
+allowBuilds:
+  # Bundler for the extension; postinstall links its platform binary.
+  esbuild: true
+  # Fetches the platform signing binary used by `vsce package`/`publish`.
+  '@vscode/vsce-sign': true
+  # Optional native credential store pulled in by vsce; CI authenticates
+  # with VSCE_PAT, so skip the node-gyp build.
+  keytar: false
