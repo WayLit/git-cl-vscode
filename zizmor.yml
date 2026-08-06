@@ -1,0 +1,8 @@
+rules:
+  use-trusted-publishing:
+    ignore:
+      # The VS Code Marketplace has no OIDC trusted publishing. The closest
+      # equivalent is `vsce publish --azure-credential`, which needs a Microsoft
+      # Entra ID app registration with a GitHub federated credential wired up
+      # outside this repo. Until that exists, VSCE_PAT is the only option.
+      - release.yml
