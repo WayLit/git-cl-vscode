@@ -285,7 +285,7 @@
     "@types/node": "^25.5.2",
     "@types/vscode": "^1.110.0",
     "@vitest/coverage-v8": "^5.0.0",
-    "@vscode/vsce": "^3.7.1",
+    "@vscode/vsce": "^4.0.0",
     "esbuild": "^0.28.0",
     "semver": "^7.7.4",
     "typescript": "^7.0.0",
