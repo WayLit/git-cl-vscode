@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as childProcess from 'child_process';
+import * as path from 'path';
 import {
 	getGitRoot,
+	getGitDir,
+	getGitCommonDir,
 	getGitStatus,
 	gitAdd,
 	gitReset,
@@ -44,6 +47,28 @@ function mockExecError(message: string) {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+});
+
+describe('git directory resolution', () => {
+	it('resolves a relative per-worktree git directory against the working directory', async () => {
+		const cwd = path.resolve('project', 'nested');
+		mockExecSuccess('../../.git/worktrees/feature\n');
+		expect(await getGitDir(cwd)).toBe(path.resolve(cwd, '../../.git/worktrees/feature'));
+		expect(mockedExecFile).toHaveBeenCalledWith(
+			'git', ['rev-parse', '--git-dir'], expect.objectContaining({ cwd }), expect.any(Function)
+		);
+	});
+
+	it('preserves an absolute common git directory', async () => {
+		const gitDir = path.resolve('project', '.git');
+		mockExecSuccess(`${gitDir}\n`);
+		expect(await getGitCommonDir(path.resolve('worktree'))).toBe(gitDir);
+	});
+
+	it('reports failure to resolve the per-worktree directory', async () => {
+		mockExecError('not a git repository');
+		await expect(getGitDir(path.resolve('project'))).rejects.toThrow('git rev-parse failed');
+	});
 });
 
 // ── getGitRoot ──────────────────────────────────────────────────────────────

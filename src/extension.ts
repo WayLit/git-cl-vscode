@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { getGitRoot, getGitCommonDir, getGitStatus, gitAdd, gitReset, gitCommit, gitCheckout, gitStashPush, gitStashDrop, gitStashPop, gitStashList, getCurrentBranch, gitCheckoutBranch, gitBranchExists, gitCheckoutExistingBranch } from './gitUtils';
+import { getGitRoot, getGitCommonDir, getGitDir, getGitStatus, gitAdd, gitReset, gitCommit, gitCheckout, gitStashPush, gitStashDrop, gitStashPop, gitStashList, getCurrentBranch, gitCheckoutBranch, gitBranchExists, gitCheckoutExistingBranch } from './gitUtils';
 import { ChangelistTreeDataProvider, TreeNode } from './changelistTreeProvider';
 import { validateChangelistName } from './changelistStore';
 import { FileCategories, StashMetadata } from './stashStore';
@@ -24,17 +24,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		return;
 	}
 
-	// Resolve the common git dir (handles worktrees where .git is a file, not a directory)
+	// Changelist data is shared; index and HEAD belong to the current worktree.
 	let gitCommonDir: string;
+	let gitDir: string;
 	try {
 		gitCommonDir = await getGitCommonDir(workspaceFolder.uri.fsPath);
-	} catch {
-		gitCommonDir = path.join(gitRoot, '.git');
+		gitDir = await getGitDir(workspaceFolder.uri.fsPath);
+	} catch (err) {
+		const msg = err instanceof Error ? err.message : String(err);
+		outputChannel.appendLine(`git-cl: Failed to resolve git directories: ${msg}`);
+		vscode.window.showErrorMessage(`git-cl: Failed to resolve git directories: ${msg}`);
+		return;
 	}
 
 	// Initialize TreeView provider (changelists section in Source Control sidebar)
 	vscode.commands.executeCommand('setContext', 'git-cl:hasGitRoot', true);
-	const scmProvider = new ChangelistTreeDataProvider(gitRoot, outputChannel, gitCommonDir);
+	const scmProvider = new ChangelistTreeDataProvider(gitRoot, outputChannel, gitCommonDir, gitDir);
 	const treeView = vscode.window.createTreeView('git-cl.changelists', {
 		treeDataProvider: scmProvider,
 		dragAndDropController: scmProvider,
@@ -45,6 +50,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
 	const statusCmd = vscode.commands.registerCommand('git-cl.showStatus', async () => {
 		await showFormattedStatus(outputChannel, scmProvider, gitRoot);
+	});
+
+	const refreshCmd = vscode.commands.registerCommand('git-cl.refresh', async () => {
+		try {
+			await scmProvider.refresh();
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			outputChannel.appendLine(`git-cl: Refresh error: ${msg}`);
+			vscode.window.showErrorMessage(`git-cl: Refresh failed: ${msg}`);
+		}
 	});
 
 	const addToChangelistCmd = vscode.commands.registerCommand(
@@ -801,7 +816,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		}
 	);
 
-	context.subscriptions.push(statusCmd, addToChangelistCmd, removeFromChangelistCmd, openFileDiffCmd, deleteChangelistCmd, deleteAllChangelistsCmd, stageChangelistCmd, unstageChangelistCmd, commitChangelistCmd, diffChangelistCmd, checkoutChangelistCmd, stashChangelistCmd, stashAllChangelistsCmd, unstashChangelistCmd, unstashForceChangelistCmd, unstashAllChangelistsCmd, branchFromChangelistCmd);
+	context.subscriptions.push(statusCmd, refreshCmd, addToChangelistCmd, removeFromChangelistCmd, openFileDiffCmd, deleteChangelistCmd, deleteAllChangelistsCmd, stageChangelistCmd, unstageChangelistCmd, commitChangelistCmd, diffChangelistCmd, checkoutChangelistCmd, stashChangelistCmd, stashAllChangelistsCmd, unstashChangelistCmd, unstashForceChangelistCmd, unstashAllChangelistsCmd, branchFromChangelistCmd);
 	outputChannel.appendLine('git-cl extension activated.');
 }
 
