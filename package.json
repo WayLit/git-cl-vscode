@@ -23,6 +23,12 @@
   "contributes": {
     "commands": [
       {
+        "command": "git-cl.refresh",
+        "title": "Refresh Changelists",
+        "category": "git-cl",
+        "icon": "$(refresh)"
+      },
+      {
         "command": "git-cl.showStatus",
         "title": "Show Changelist Status",
         "category": "git-cl",
@@ -247,6 +253,11 @@
         }
       ],
       "view/title": [
+        {
+          "command": "git-cl.refresh",
+          "when": "view == git-cl.changelists",
+          "group": "navigation"
+        },
         {
           "command": "git-cl.deleteAllChangelists",
           "when": "view == git-cl.changelists",
