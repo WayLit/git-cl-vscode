@@ -53,6 +53,12 @@ export async function getGitCommonDir(cwd: string): Promise<string> {
 	return path.resolve(cwd, result);
 }
 
+/** Returns the absolute path to this worktree's git directory. */
+export async function getGitDir(cwd: string): Promise<string> {
+	const output = await execGit(['rev-parse', '--git-dir'], cwd);
+	return path.resolve(cwd, output.trim());
+}
+
 /**
  * Runs `git status --porcelain` and returns a parsed map of
  * relative file path → 2-character status code (e.g., " M", "??", "A ").

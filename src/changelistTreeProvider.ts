@@ -77,7 +77,7 @@ export class ChangelistTreeDataProvider implements vscode.TreeDataProvider<TreeN
 
 	private readonly gitCommonDir: string;
 
-	constructor(private readonly gitRoot: string, private readonly outputChannel?: vscode.OutputChannel, gitCommonDir?: string) {
+	constructor(private readonly gitRoot: string, private readonly outputChannel?: vscode.OutputChannel, gitCommonDir?: string, private readonly gitDir: string = path.join(gitRoot, '.git')) {
 		this.gitCommonDir = gitCommonDir ?? path.join(gitRoot, '.git');
 		this.changelistStore = new ChangelistStore(gitRoot, this.gitCommonDir);
 		this.stashStore = new StashStore(gitRoot, this.gitCommonDir);
@@ -98,13 +98,15 @@ export class ChangelistTreeDataProvider implements vscode.TreeDataProvider<TreeN
 	}
 
 	private setupWatchers(): void {
-		const gitDir = this.gitCommonDir;
-
-		// Watch cl.json, cl-stashes.json, git index, and HEAD (for branch switches)
-		const patterns = ['cl.json', 'cl-stashes.json', 'index', 'HEAD'];
-		for (const file of patterns) {
+		const patterns = [
+			{ dir: this.gitCommonDir, file: 'cl.json' },
+			{ dir: this.gitCommonDir, file: 'cl-stashes.json' },
+			{ dir: this.gitDir, file: 'index' },
+			{ dir: this.gitDir, file: 'HEAD' },
+		];
+		for (const { dir, file } of patterns) {
 			const watcher = vscode.workspace.createFileSystemWatcher(
-				new vscode.RelativePattern(vscode.Uri.file(gitDir), file)
+				new vscode.RelativePattern(vscode.Uri.file(dir), file)
 			);
 			watcher.onDidChange(() => this.debouncedRefresh());
 			watcher.onDidCreate(() => this.debouncedRefresh());
