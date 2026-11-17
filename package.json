@@ -29,6 +29,12 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "git-cl.prune",
+        "title": "Prune Changelists",
+        "category": "git-cl",
+        "icon": "$(clear-all)"
+      },
+      {
         "command": "git-cl.showStatus",
         "title": "Show Changelist Status",
         "category": "git-cl",
@@ -253,6 +259,11 @@
         }
       ],
       "view/title": [
+        {
+          "command": "git-cl.prune",
+          "when": "view == git-cl.changelists && git-cl:hasStaleEntries",
+          "group": "navigation"
+        },
         {
           "command": "git-cl.refresh",
           "when": "view == git-cl.changelists",

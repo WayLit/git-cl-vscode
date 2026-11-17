@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { getGitRoot, getGitCommonDir, getGitDir, getGitStatus, gitAdd, gitReset, gitCommit, gitCheckout, gitStashPush, gitStashDrop, gitStashPop, gitStashList, getCurrentBranch, gitCheckoutBranch, gitBranchExists, gitCheckoutExistingBranch } from './gitUtils';
 import { ChangelistTreeDataProvider, TreeNode } from './changelistTreeProvider';
-import { validateChangelistName } from './changelistStore';
+import { findStaleEntries, validateChangelistName } from './changelistStore';
 import { FileCategories, StashMetadata } from './stashStore';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -60,6 +60,42 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 			outputChannel.appendLine(`git-cl: Refresh error: ${msg}`);
 			vscode.window.showErrorMessage(`git-cl: Refresh failed: ${msg}`);
 		}
+	});
+
+	const pruneCmd = vscode.commands.registerCommand('git-cl.prune', async () => {
+		const store = scmProvider.getChangelistStore();
+		store.load();
+
+		let gitStatusMap: Map<string, string>;
+		try {
+			gitStatusMap = await getGitStatus(gitRoot);
+		} catch {
+			vscode.window.showErrorMessage('git-cl: Failed to read git status.');
+			return;
+		}
+
+		const stale = findStaleEntries(store.getAll(), gitStatusMap);
+		const count = Object.values(stale).reduce((n, files) => n + files.length, 0);
+		if (count === 0) {
+			vscode.window.showInformationMessage('git-cl: Nothing to prune.');
+			await scmProvider.refresh();
+			return;
+		}
+
+		try {
+			store.prune(stale);
+			store.save();
+		} catch (e: unknown) {
+			const msg = e instanceof Error ? e.message : String(e);
+			vscode.window.showErrorMessage(`git-cl: ${msg}`);
+			return;
+		}
+		for (const [name, files] of Object.entries(stale)) {
+			outputChannel.appendLine(`git-cl: Pruned from "${name}": ${files.join(', ')}`);
+		}
+
+		await scmProvider.refresh();
+		vscode.window.showInformationMessage(`git-cl: Pruned ${count} stale entr${count === 1 ? 'y' : 'ies'}.`);
 	});
 
 	const addToChangelistCmd = vscode.commands.registerCommand(
@@ -816,7 +852,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		}
 	);
 
-	context.subscriptions.push(statusCmd, refreshCmd, addToChangelistCmd, removeFromChangelistCmd, openFileDiffCmd, deleteChangelistCmd, deleteAllChangelistsCmd, stageChangelistCmd, unstageChangelistCmd, commitChangelistCmd, diffChangelistCmd, checkoutChangelistCmd, stashChangelistCmd, stashAllChangelistsCmd, unstashChangelistCmd, unstashForceChangelistCmd, unstashAllChangelistsCmd, branchFromChangelistCmd);
+	context.subscriptions.push(statusCmd, refreshCmd, pruneCmd, addToChangelistCmd, removeFromChangelistCmd, openFileDiffCmd, deleteChangelistCmd, deleteAllChangelistsCmd, stageChangelistCmd, unstageChangelistCmd, commitChangelistCmd, diffChangelistCmd, checkoutChangelistCmd, stashChangelistCmd, stashAllChangelistsCmd, unstashChangelistCmd, unstashForceChangelistCmd, unstashAllChangelistsCmd, branchFromChangelistCmd);
 	outputChannel.appendLine('git-cl extension activated.');
 }
 

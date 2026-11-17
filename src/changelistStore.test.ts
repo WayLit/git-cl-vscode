@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { ChangelistStore, validateChangelistName, sanitizeFilePath } from './changelistStore';
+import { ChangelistStore, findStaleEntries, validateChangelistName, sanitizeFilePath } from './changelistStore';
 
 // ── validateChangelistName ──────────────────────────────────────────────────
 
@@ -423,5 +423,48 @@ describe('ChangelistStore', () => {
 			store2.load();
 			expect(store2.getNames()).toEqual(['filled']);
 		});
+	});
+});
+
+// ── findStaleEntries / prune ────────────────────────────────────────────────
+
+describe('findStaleEntries', () => {
+	const status = new Map([
+		['modified.ts', ' M'],
+		['deleted.ts', ' D'],
+		['newdir/', '??'],
+		['src/lib/changed.ts', 'M '],
+	]);
+
+	it('flags only entries Git reports nothing for', () => {
+		const stale = findStaleEntries({
+			a: ['modified.ts', 'clean.ts', 'deleted.ts'],
+			b: ['newdir/file.ts', 'src/lib', 'src/lib/', 'src/other'],
+			c: ['clean2.ts'],
+			empty: [],
+		}, status);
+		expect(stale).toEqual({ a: ['clean.ts'], b: ['src/other'], c: ['clean2.ts'] });
+	});
+});
+
+describe('ChangelistStore.prune', () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'git-cl-prune-'));
+		fs.mkdirSync(path.join(tmpDir, '.git'));
+	});
+
+	afterEach(() => {
+		fs.rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	it('removes stale files, deletes emptied changelists, keeps already-empty ones', () => {
+		fs.writeFileSync(path.join(tmpDir, '.git', 'cl.json'),
+			JSON.stringify({ a: ['x', 'y'], b: ['z'], planned: [] }));
+		const store = new ChangelistStore(tmpDir);
+		store.load();
+		store.prune({ a: ['x'], b: ['z'] });
+		expect(store.getAll()).toEqual({ a: ['y'], planned: [] });
 	});
 });
