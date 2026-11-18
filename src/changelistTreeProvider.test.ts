@@ -5,6 +5,8 @@ import * as path from 'path';
 import { ChangelistTreeDataProvider } from './changelistTreeProvider';
 
 const mocks = vi.hoisted(() => ({
+	executeCommand: vi.fn(),
+	getGitStatus: vi.fn(),
 	watchers: [] as Array<{
 		dir: string;
 		file: string;
@@ -43,10 +45,11 @@ vi.mock('vscode', () => ({
 		},
 	},
 	window: { showWarningMessage: vi.fn() },
+	commands: { executeCommand: mocks.executeCommand },
 }));
 
 vi.mock('./gitUtils', () => ({
-	getGitStatus: vi.fn().mockResolvedValue(new Map()),
+	getGitStatus: mocks.getGitStatus,
 }));
 
 describe('ChangelistTreeDataProvider refresh', () => {
@@ -58,6 +61,7 @@ describe('ChangelistTreeDataProvider refresh', () => {
 	beforeEach(async () => {
 		vi.useFakeTimers();
 		mocks.watchers.length = 0;
+		mocks.getGitStatus.mockReset().mockResolvedValue(new Map());
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'git-cl-tree-'));
 		commonDir = path.join(tmpDir, 'common');
 		worktreeDir = path.join(tmpDir, 'worktree-git');
@@ -103,5 +107,20 @@ describe('ChangelistTreeDataProvider refresh', () => {
 		mocks.watchers.find(watcher => watcher.file === file)?.change?.();
 		await vi.advanceTimersByTimeAsync(300);
 		expect(provider.getChildren()).toEqual([]);
+	});
+
+	const staleContext = () => mocks.executeCommand.mock.calls.filter(c => c[1] === 'git-cl:hasStaleEntries').pop()?.[2];
+
+	it('sets git-cl:hasStaleEntries when a changelist file is unchanged', async () => {
+		expect(staleContext()).toBe(true);
+		mocks.getGitStatus.mockResolvedValue(new Map([['file.txt', ' M']]));
+		await provider.refresh();
+		expect(staleContext()).toBe(false);
+	});
+
+	it('does not offer pruning when git status fails', async () => {
+		mocks.getGitStatus.mockRejectedValue(new Error('boom'));
+		await provider.refresh();
+		expect(staleContext()).toBe(false);
 	});
 });

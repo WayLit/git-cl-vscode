@@ -216,6 +216,23 @@ export class ChangelistStore {
 		return [...files];
 	}
 
+	/** Remove stale entries; changelists emptied by this are deleted, like `git cl prune`. */
+	prune(stale: Readonly<ChangelistData>): void {
+		for (const [name, files] of Object.entries(stale)) {
+			const current = this.data[name];
+			if (!current) {
+				continue;
+			}
+			const remove = new Set(files);
+			const kept = current.filter(f => !remove.has(f));
+			if (kept.length === 0) {
+				delete this.data[name];
+			} else {
+				this.data[name] = kept;
+			}
+		}
+	}
+
 	/** Delete all changelists. */
 	deleteAll(): void {
 		this.data = {};
@@ -236,4 +253,34 @@ export class ChangelistStore {
 	getFilePath(): string {
 		return this.filePath;
 	}
+}
+
+/**
+ * Find changelist entries that `git cl prune` would remove: entries Git reports
+ * nothing for (unchanged, gitignored, or missing and unknown to Git).
+ * A directory entry is kept while any file inside it has a status.
+ * `status` comes from plain `git status --porcelain`, which collapses untracked
+ * directories to "dir/", so entries inside such a directory count as having a status.
+ */
+export function findStaleEntries(
+	changelists: Readonly<ChangelistData>,
+	status: ReadonlyMap<string, string>,
+): ChangelistData {
+	const statusPaths = [...status.keys()];
+	const isStale = (entry: string): boolean => {
+		if (status.has(entry)) {
+			return false;
+		}
+		const prefix = entry.replace(/\/+$/, '') + '/';
+		return !statusPaths.some(p => p.startsWith(prefix) || (p.endsWith('/') && entry.startsWith(p)));
+	};
+
+	const stale: ChangelistData = {};
+	for (const [name, files] of Object.entries(changelists)) {
+		const staleFiles = files.filter(isStale);
+		if (staleFiles.length > 0) {
+			stale[name] = staleFiles;
+		}
+	}
+	return stale;
 }

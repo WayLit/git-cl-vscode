@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { execFile } from 'child_process';
-import { ChangelistStore } from './changelistStore';
+import { ChangelistStore, findStaleEntries } from './changelistStore';
 import { StashStore, StashMetadata } from './stashStore';
 import { getGitStatus, GitStatusMap } from './gitUtils';
 
@@ -137,9 +137,11 @@ export class ChangelistTreeDataProvider implements vscode.TreeDataProvider<TreeN
 		this.stashStore.load();
 
 		let gitStatus: GitStatusMap;
+		let gitStatusOk = true;
 		try {
 			gitStatus = await getGitStatus(this.gitRoot);
 		} catch (err) {
+			gitStatusOk = false;
 			const errMsg = err instanceof Error ? err.message : String(err);
 			this.outputChannel?.appendLine(`git-cl: Failed to read git status: ${errMsg}`);
 			gitStatus = new Map();
@@ -148,6 +150,9 @@ export class ChangelistTreeDataProvider implements vscode.TreeDataProvider<TreeN
 		this.cachedChangelists = this.changelistStore.getAll();
 		this.cachedStashData = this.stashStore.getAll();
 		this.cachedGitStatus = gitStatus;
+		// Without a git status every entry would look stale, so don't offer to prune
+		const hasStale = gitStatusOk && Object.keys(findStaleEntries(this.cachedChangelists, gitStatus)).length > 0;
+		void vscode.commands.executeCommand('setContext', 'git-cl:hasStaleEntries', hasStale);
 
 		// Compute unassigned files
 		const assignedFiles = new Set<string>();

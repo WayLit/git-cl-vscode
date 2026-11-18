@@ -11,6 +11,7 @@ Manage [git-cl](https://github.com/BHFock/git-cl) changelists directly in VS Cod
 - **Branch from changelist** — Create a new branch containing only the files in a specific changelist.
 - **Auto-refresh** — The tree updates automatically when `cl.json` changes on disk (e.g. from the CLI tool) or when git status changes.
 - **Manual refresh** — Use the refresh button in the Changelists view or run `git-cl: Refresh Changelists` from the Command Palette.
+- **Prune** — After committing outside git-cl (e.g. plain `git commit`), changelists keep files that no longer have changes. A prune button appears in the Changelists view when there are such entries; it removes them, deletes changelists left empty, then refreshes. Same rules as `git cl prune`. Also available as `git-cl: Prune Changelists`.
 - **Fully interoperable** — Reads and writes the same `.git/cl.json` and `.git/cl-stashes.json` files as the Python CLI, so you can use both tools side by side.
 
 ## Installation
@@ -71,6 +72,7 @@ All commands are available via the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+
 | Command | Description |
 |---------|-------------|
 | `git-cl: Refresh Changelists` | Reload changelists and Git status |
+| `git-cl: Prune Changelists` | Remove unchanged files from changelists, then refresh |
 | `git-cl: Add to Changelist` | Add files to a changelist |
 | `git-cl: Remove from Changelist` | Remove files from their changelist |
 | `git-cl: Delete Changelist` | Delete a changelist |
