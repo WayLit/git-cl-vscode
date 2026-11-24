@@ -46,7 +46,12 @@ export type TreeNode =
 	| { type: 'unassignedSection' }
 	| { type: 'unassignedFile'; filePath: string }
 	| { type: 'stashedChangelist'; name: string; metadata: StashMetadata }
-	| { type: 'stashedFile'; filePath: string; stashName: string };
+	| { type: 'stashedFile'; filePath: string; stashName: string }
+	| { type: 'folder'; dirPath: string; container: TreeNode };
+
+type FileNode = Extract<TreeNode, { filePath: string }>;
+
+export type ViewMode = 'list' | 'tree';
 
 const TREE_MIME_TYPE = 'application/vnd.code.tree.git-cl.changelists';
 
@@ -76,6 +81,11 @@ export class ChangelistTreeDataProvider implements vscode.TreeDataProvider<TreeN
 	private cachedUnassigned: string[] = [];
 
 	private readonly gitCommonDir: string;
+	private viewMode: ViewMode = 'list';
+	// Set by Expand/Collapse All. VS Code remembers each item's expansion by id, so the
+	// generation goes into container ids to make it apply the new state.
+	private forcedState: vscode.TreeItemCollapsibleState | undefined;
+	private generation = 0;
 
 	constructor(private readonly gitRoot: string, private readonly outputChannel?: vscode.OutputChannel, gitCommonDir?: string, private readonly gitDir: string = path.join(gitRoot, '.git')) {
 		this.gitCommonDir = gitCommonDir ?? path.join(gitRoot, '.git');
@@ -197,17 +207,102 @@ export class ChangelistTreeDataProvider implements vscode.TreeDataProvider<TreeN
 		this._onDidChangeTreeData.fire(undefined);
 	}
 
+	setAllExpanded(expanded: boolean): void {
+		this.forcedState = expanded ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed;
+		this.generation++;
+		this._onDidChangeTreeData.fire(undefined);
+	}
+
+	private containerItem(label: string | vscode.TreeItemLabel, defaultState: vscode.TreeItemCollapsibleState, id: string): vscode.TreeItem {
+		const item = new vscode.TreeItem(label, this.forcedState ?? defaultState);
+		item.id = this.generation ? `${id}#${this.generation}` : id;
+		return item;
+	}
+
+	setViewMode(mode: ViewMode): void {
+		this.viewMode = mode;
+		this._onDidChangeTreeData.fire(undefined);
+	}
+
+	/** List mode shows the containing directory next to the file name, like the built-in Changes view. */
+	private dirDescription(filePath: string): string | undefined {
+		const dir = path.posix.dirname(filePath);
+		return this.viewMode === 'list' && dir !== '.' ? dir : undefined;
+	}
+
+	private fileNodes(container: TreeNode): FileNode[] {
+		switch (container.type) {
+			case 'changelist':
+				return (this.cachedChangelists[container.name] ?? []).map(filePath => ({
+					type: 'changelistFile' as const,
+					filePath,
+					changelistName: container.name,
+				}));
+			case 'unassignedSection':
+				return this.cachedUnassigned.map(filePath => ({
+					type: 'unassignedFile' as const,
+					filePath,
+				}));
+			case 'stashedChangelist':
+				return container.metadata.files.map(filePath => ({
+					type: 'stashedFile' as const,
+					filePath,
+					stashName: container.name,
+				}));
+			default:
+				return [];
+		}
+	}
+
+	/** Children of `container` directly under `prefix` ('' or 'dir/'): folders first in tree mode, all files in list mode. */
+	private childrenUnder(container: TreeNode, prefix: string): TreeNode[] {
+		const files = this.fileNodes(container);
+		if (this.viewMode === 'list') {
+			return files;
+		}
+		const folders = new Map<string, TreeNode>();
+		const leaves: TreeNode[] = [];
+		for (const node of files) {
+			if (!node.filePath.startsWith(prefix)) {
+				continue;
+			}
+			const slash = node.filePath.indexOf('/', prefix.length);
+			if (slash === -1) {
+				leaves.push(node);
+			} else {
+				const dirPath = node.filePath.slice(0, slash);
+				if (!folders.has(dirPath)) {
+					folders.set(dirPath, { type: 'folder', dirPath, container });
+				}
+			}
+		}
+		return [...folders.values(), ...leaves];
+	}
+
 	getTreeItem(element: TreeNode): vscode.TreeItem {
 		switch (element.type) {
+			case 'folder': {
+				const item = this.containerItem(
+					path.posix.basename(element.dirPath),
+					vscode.TreeItemCollapsibleState.Expanded,
+					`${this.getTreeItem(element.container).id}/dir:${element.dirPath}`
+				);
+				item.contextValue = 'folder';
+				item.iconPath = vscode.ThemeIcon.Folder;
+				item.resourceUri = vscode.Uri.file(path.join(this.gitRoot, element.dirPath));
+				item.tooltip = element.dirPath;
+				return item;
+			}
+
 			case 'changelist': {
 				const files = this.cachedChangelists[element.name] ?? [];
-				const item = new vscode.TreeItem(
+				const item = this.containerItem(
 					element.name,
-					vscode.TreeItemCollapsibleState.Expanded
+					vscode.TreeItemCollapsibleState.Expanded,
+					`cl:${element.name}`
 				);
-				item.id = `cl:${element.name}`;
 				item.contextValue = 'changelist';
-				item.iconPath = new vscode.ThemeIcon('list-unordered');
+				item.iconPath = new vscode.ThemeIcon('list-unordered', new vscode.ThemeColor('charts.blue'));
 				item.description = `${files.length} file(s)`;
 				return item;
 			}
@@ -217,6 +312,7 @@ export class ChangelistTreeDataProvider implements vscode.TreeDataProvider<TreeN
 				const item = new vscode.TreeItem(uri);
 				item.id = `cl:${element.changelistName}:${element.filePath}`;
 				item.contextValue = 'changelistFile';
+				item.description = this.dirDescription(element.filePath);
 				item.command = this.createFileCommand(element.filePath, uri);
 				item.resourceUri = uri;
 				this.applyFileDecorations(item, element.filePath, uri);
@@ -224,11 +320,7 @@ export class ChangelistTreeDataProvider implements vscode.TreeDataProvider<TreeN
 			}
 
 			case 'unassignedSection': {
-				const item = new vscode.TreeItem(
-					'Unassigned',
-					vscode.TreeItemCollapsibleState.Collapsed
-				);
-				item.id = 'unassigned';
+				const item = this.containerItem('Unassigned', vscode.TreeItemCollapsibleState.Collapsed, 'unassigned');
 				item.contextValue = 'unassignedSection';
 				item.description = `${this.cachedUnassigned.length} file(s)`;
 				return item;
@@ -239,6 +331,7 @@ export class ChangelistTreeDataProvider implements vscode.TreeDataProvider<TreeN
 				const item = new vscode.TreeItem(uri);
 				item.id = `unassigned:${element.filePath}`;
 				item.contextValue = 'unassignedFile';
+				item.description = this.dirDescription(element.filePath);
 				item.command = this.createFileCommand(element.filePath, uri);
 				item.resourceUri = uri;
 				this.applyFileDecorations(item, element.filePath, uri);
@@ -246,11 +339,11 @@ export class ChangelistTreeDataProvider implements vscode.TreeDataProvider<TreeN
 			}
 
 			case 'stashedChangelist': {
-				const item = new vscode.TreeItem(
+				const item = this.containerItem(
 					formatStashLabel(element.name, element.metadata),
-					vscode.TreeItemCollapsibleState.Collapsed
+					vscode.TreeItemCollapsibleState.Collapsed,
+					`stash:${element.name}`
 				);
-				item.id = `stash:${element.name}`;
 				item.contextValue = 'stashedChangelist';
 				item.iconPath = new vscode.ThemeIcon('archive');
 				return item;
@@ -261,7 +354,7 @@ export class ChangelistTreeDataProvider implements vscode.TreeDataProvider<TreeN
 				const item = new vscode.TreeItem(uri);
 				item.id = `stash:${element.stashName}:${element.filePath}`;
 				item.contextValue = 'stashedFile';
-				item.description = '(stashed)';
+				item.description = [this.dirDescription(element.filePath), '(stashed)'].filter(Boolean).join(' ');
 				item.resourceUri = uri;
 				return item;
 			}
@@ -291,34 +384,9 @@ export class ChangelistTreeDataProvider implements vscode.TreeDataProvider<TreeN
 			return nodes;
 		}
 
-		switch (element.type) {
-			case 'changelist': {
-				const files = this.cachedChangelists[element.name] ?? [];
-				return files.map(filePath => ({
-					type: 'changelistFile' as const,
-					filePath,
-					changelistName: element.name,
-				}));
-			}
-
-			case 'unassignedSection': {
-				return this.cachedUnassigned.map(filePath => ({
-					type: 'unassignedFile' as const,
-					filePath,
-				}));
-			}
-
-			case 'stashedChangelist': {
-				return element.metadata.files.map(filePath => ({
-					type: 'stashedFile' as const,
-					filePath,
-					stashName: element.name,
-				}));
-			}
-
-			default:
-				return [];
-		}
+		return element.type === 'folder'
+			? this.childrenUnder(element.container, `${element.dirPath}/`)
+			: this.childrenUnder(element, '');
 	}
 
 	handleDrag(source: readonly TreeNode[], dataTransfer: vscode.DataTransfer, _token: vscode.CancellationToken): void {
@@ -340,6 +408,11 @@ export class ChangelistTreeDataProvider implements vscode.TreeDataProvider<TreeN
 		const draggedNodes: TreeNode[] = transferItem.value;
 		if (!draggedNodes || draggedNodes.length === 0) {
 			return;
+		}
+
+		// Dropping onto a folder targets the changelist (or Unassigned) that contains it
+		if (target?.type === 'folder') {
+			target = target.container;
 		}
 
 		// Determine target changelist name
