@@ -23,6 +23,13 @@ vi.mock('vscode', () => ({
 		fire = vi.fn();
 	},
 	Uri: { file: (fsPath: string) => ({ fsPath }) },
+	TreeItem: class {
+		id?: string;
+		constructor(public label: unknown, public collapsibleState?: number) {}
+	},
+	TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
+	ThemeIcon: class { static Folder = {}; constructor(public id: string, public color?: unknown) {} },
+	ThemeColor: class { constructor(public id: string) {} },
 	RelativePattern: class {
 		constructor(public baseUri: { fsPath: string }, public pattern: string) {}
 	},
@@ -93,6 +100,39 @@ describe('ChangelistTreeDataProvider refresh', () => {
 		fs.writeFileSync(path.join(commonDir, 'cl.json'), '{}');
 		await provider.refresh();
 		expect(provider.getChildren()).toEqual([]);
+	});
+
+	it('groups files into folders in tree mode and flattens them in list mode', async () => {
+		const files = ['src/a/x.ts', 'src/a/y.ts', 'src/b.ts', 'root.txt'];
+		fs.writeFileSync(path.join(commonDir, 'cl.json'), JSON.stringify({ feature: files }));
+		await provider.refresh();
+		const cl = { type: 'changelist' as const, name: 'feature' };
+		const file = (filePath: string) => ({ type: 'changelistFile', filePath, changelistName: 'feature' });
+
+		expect(provider.getChildren(cl)).toEqual(files.map(file));
+
+		provider.setViewMode('tree');
+		const src = { type: 'folder' as const, dirPath: 'src', container: cl };
+		const srcA = { type: 'folder' as const, dirPath: 'src/a', container: cl };
+		expect(provider.getChildren(cl)).toEqual([src, file('root.txt')]);
+		expect(provider.getChildren(src)).toEqual([srcA, file('src/b.ts')]);
+		expect(provider.getChildren(srcA)).toEqual([file('src/a/x.ts'), file('src/a/y.ts')]);
+	});
+
+	it('collapses and expands every container with fresh ids', () => {
+		const cl = { type: 'changelist' as const, name: 'feature' };
+		const before = provider.getTreeItem(cl);
+		expect(before.collapsibleState).toBe(2);
+
+		provider.setAllExpanded(false);
+		const collapsed = provider.getTreeItem(cl);
+		expect(collapsed.collapsibleState).toBe(1);
+		expect(collapsed.id).not.toBe(before.id);
+
+		provider.setAllExpanded(true);
+		const expanded = provider.getTreeItem(cl);
+		expect(expanded.collapsibleState).toBe(2);
+		expect(expanded.id).not.toBe(collapsed.id);
 	});
 
 	it.each(['change', 'create', 'delete'] as const)('reloads after a cl.json %s event', async event => {
